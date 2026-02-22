@@ -702,7 +702,6 @@ var CITIES = [
     name: 'Detroit, MI',
     note: 'Non-Fatal Shootings (Manual)',
     type: 'Non-Fatal',
-    manual: true,
     dataUrl: 'https://detroitmi.gov/Calendar-and-Events?field_start_value=2026-02-19&title=&term_node_tid_depth=All&term_node_tid_depth_1=1676&term_node_tid_depth_2=All',
     count: async function(s, e) {
       // Try auto-fetched data first
@@ -727,7 +726,6 @@ var CITIES = [
     name: 'Durham, NC',
     note: 'Shooting Victims (Fatal + Non-Fatal, Manual)',
     type: 'Victims',
-    manual: true,
     dataUrl: 'https://www.durhamnc.gov/Archive.aspx?AMID=211',
     count: async function(s, e) {
       var auto = await loadAutoData();
@@ -972,7 +970,6 @@ var CITIES = [
     name: 'Wilmington, DE',
     note: 'Shooting Victims (CompStat PDF)',
     type: 'Victims',
-    manual: true,
     dataUrl: 'https://www.wilmingtonde.gov/government/public-safety/wilmington-police-department/compstat-reports',
     count: async function(s, e) {
       var auto = await loadAutoData();
