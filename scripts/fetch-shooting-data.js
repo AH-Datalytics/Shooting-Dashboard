@@ -473,8 +473,8 @@ async function fetchPittsburgh() {
   const url = 'https://app.powerbigov.us/view?r=eyJrIjoiMDYzNWMyNGItNWNjMS00ODMwLWIxZDgtMTNkNzhlZDE2OWFjIiwidCI6ImY1ZjQ3OTE3LWM5MDQtNDM2OC05MTIwLWQzMjdjZjE3NTU5MSJ9';
   console.log('Pittsburgh: loading Power BI dashboard...');
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  // Power BI Gov renders via canvas/iframe - fixed wait, no waitForFunction
-  await page.waitForTimeout(8000);
+  // Power BI Gov renders via canvas/iframe - wait generously for initial load
+  await page.waitForTimeout(15000);
 
   // Get as-of date from page 1 header "Last Updated: M/DD/YYYY"
   const page1Text = await page.evaluate(() => document.body.innerText);
@@ -484,21 +484,31 @@ async function fetchPittsburgh() {
     asof = `${dateMatch[3]}-${dateMatch[1].padStart(2,'0')}-${dateMatch[2].padStart(2,'0')}`;
   }
   console.log('Pittsburgh asof:', asof);
+  console.log('Pittsburgh page1 snippet:', page1Text.substring(0, 200));
 
-  // Navigate to page 2 - "Annual Stats" tab exists but may not be visible, use force click
-  console.log('Pittsburgh: navigating to page 2...');
-  try {
-    await page.locator('[aria-label="Annual Stats"]').first().click({ force: true, timeout: 10000 });
-    await page.waitForTimeout(4000);
-    console.log('Pittsburgh: clicked Annual Stats tab');
-  } catch(e) {
-    console.log('Pittsburgh: Annual Stats click failed:', e.message.split('\n')[0]);
+  // Navigate to "Year to Date Stats" page - try multiple selectors
+  console.log('Pittsburgh: navigating to Year to Date Stats page...');
+  let navigated = false;
+  for (const selector of [
+    '[aria-label="Year to Date Stats"]',
+    '[aria-label="Annual Stats"]',
+    'button.sectionItem:first-child',
+    '.pbi-glyph-chevronrightmedium', // next page arrow
+  ]) {
+    try {
+      await page.locator(selector).first().click({ force: true, timeout: 5000 });
+      await page.waitForTimeout(5000);
+      console.log('Pittsburgh: navigated via', selector);
+      navigated = true;
+      break;
+    } catch(e) { /* try next */ }
   }
+  if (!navigated) console.log('Pittsburgh: could not navigate, will screenshot current page');
 
-  // Click "Gun" in the Weapon Type by Incident chart to filter
+  // Click "Gun" in the Weapon Type by Incident legend to filter
   console.log('Pittsburgh: clicking Gun filter...');
   try {
-    await page.locator('text=Gun').first().click({ force: true, timeout: 10000 });
+    await page.locator('text=Gun').first().click({ force: true, timeout: 8000 });
     await page.waitForTimeout(3000);
     console.log('Pittsburgh: clicked Gun filter');
   } catch(e) {
@@ -521,7 +531,7 @@ async function fetchPittsburgh() {
         role: 'user',
         content: [
           { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64Image } },
-          { type: 'text', text: `This is the Pittsburgh Violent Crimes Dashboard filtered to Gun weapon type. Find the YTD tables showing "Number of Homicides" and "Number of Non-Fatal Shootings" for ${yr} and ${yr-1}. Add them together to get total shooting victims. Reply with ONLY: YTD${yr}=N YTD${yr-1}=N (where N is homicides + non-fatal shootings combined for that year)` }
+          { type: 'text', text: `This is the Pittsburgh Violent Crimes Dashboard. I need the YTD shooting victim counts. Look for two tables: one showing "Number of Homicides" by year and one showing "Number of Non-Fatal Shootings" by year. Find the rows for ${yr} and ${yr-1} in each table, then add the homicide and non-fatal shooting numbers together for each year. If you can see those tables, reply with ONLY: YTD${yr}=N YTD${yr-1}=N. If you cannot see the data tables (only the cover/menu), reply with ONLY: NOTLOADED` }
         ]
       }]
     });
@@ -551,9 +561,10 @@ async function fetchPittsburgh() {
   const responseText = claudeData.content?.[0]?.text || '';
   console.log('Pittsburgh vision response:', responseText);
 
+  if (responseText.includes('NOTLOADED')) throw new Error('Pittsburgh dashboard did not load data tables');
+
   const ytdMatch   = responseText.match(new RegExp('YTD' + yr + '=(\\d+)'));
   const priorMatch = responseText.match(new RegExp('YTD' + (yr-1) + '=(\\d+)'));
-
   if (!ytdMatch) throw new Error('Could not parse Pittsburgh values. Response: ' + responseText);
 
   return {
