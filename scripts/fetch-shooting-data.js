@@ -546,7 +546,7 @@ async function fetchPittsburgh() {
         role: 'user',
         content: [
           { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64Image } },
-          { type: 'text', text: `This is the Pittsburgh Violent Crimes Dashboard on the "Year to Date Statistics" page, filtered to Gun weapon type. There are two YTD tables: "Number of Homicides" and "Number of Non-Fatal Shootings". Find the ${yr} and ${yr-1} rows in each table and add the homicide + non-fatal shooting numbers together for each year. Reply with ONLY: YTD${yr}=N YTD${yr-1}=N. If the Gun filter is not active and tables show all weapons, still report the numbers you see. If you cannot see the data tables at all, reply with ONLY: NOTLOADED` }
+          { type: 'text', text: `This is the Pittsburgh Violent Crimes Dashboard "Year to Date Stats" page. There are TWO specific tables in the upper portion of the page: one titled "Number of Homicides" (left table) and one titled "Number of Non-Fatal Shootings" (right table). Each table has a Year column and a number column. DO NOT read from the bar chart at the bottom. Read ONLY from those two upper tables. Find the ${yr} row in each table. Add the homicide number + non-fatal shooting number together. Do the same for ${yr-1}. Reply with ONLY: YTD${yr}=N YTD${yr-1}=N. If you cannot see those two tables, reply ONLY: NOTLOADED` }
         ]
       }]
     });
