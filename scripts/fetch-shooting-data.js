@@ -50,14 +50,62 @@ function todayStr() {
 
 // ─── PDF parsing with pdf.js via pdfjs-dist ───────────────────────────────────
 
+async function getPdfjsLib() {
+  let pdfjsLib;
+  try { pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js"); } catch(e) {
+    try { pdfjsLib = require("pdfjs-dist"); } catch(e2) { pdfjsLib = require("pdfjs-dist/build/pdf.js"); }
+  }
+  if (pdfjsLib.GlobalWorkerOptions) pdfjsLib.GlobalWorkerOptions.workerSrc = false;
+  return pdfjsLib;
+}
+
 async function extractPdfTokens(buffer) {
-  // Use pdfjs-dist (installed via npm in the action)
-  const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
-  pdfjsLib.GlobalWorkerOptions.workerSrc = false;
+  const pdfjsLib = await getPdfjsLib();
   const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
   const page = await pdf.getPage(1);
   const tc = await page.getTextContent();
   return tc.items.map(i => i.str.trim()).filter(s => s.length > 0);
+}
+
+// For PDFs with character-level tokens, group by Y position then X position
+// to reconstruct words and rows
+async function extractPdfRows(buffer) {
+  const pdfjsLib = await getPdfjsLib();
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
+  const page = await pdf.getPage(1);
+  const tc = await page.getTextContent();
+
+  // Group items by rounded Y coordinate (row)
+  const rowMap = {};
+  for (const item of tc.items) {
+    if (!item.str) continue;
+    const y = Math.round(item.transform[5]);
+    if (!rowMap[y]) rowMap[y] = [];
+    rowMap[y].push({ x: item.transform[4], str: item.str });
+  }
+
+  // Sort rows top-to-bottom (descending Y in PDF coords), items left-to-right
+  const rows = Object.keys(rowMap)
+    .sort((a, b) => b - a)
+    .map(y => {
+      const items = rowMap[y].sort((a, b) => a.x - b.x);
+      // Join items that are close together into words
+      let text = '';
+      let lastX = null;
+      let lastW = 0;
+      for (const item of items) {
+        if (lastX !== null && item.x - (lastX + lastW) > 3) {
+          text += ' ';
+        }
+        text += item.str;
+        lastX = item.x;
+        lastW = item.str.length * 6; // rough char width estimate
+      }
+      return text.trim();
+    })
+    .filter(r => r.length > 0);
+
+  return rows;
 }
 
 // ─── Detroit ──────────────────────────────────────────────────────────────────
@@ -78,33 +126,34 @@ async function fetchDetroit() {
   const resp = await fetchUrl(pdfUrl);
   if (resp.status !== 200) throw new Error(`Detroit PDF HTTP ${resp.status}`);
 
-  const tokens = await extractPdfTokens(resp.body);
-  const text = tokens.join(' ');
+  const rows = await extractPdfRows(resp.body);
+  console.log('Detroit rows:', rows.slice(0, 20));
 
-  // Date
-  const dateMatch = text.match(/\w+day,\s+(\w+)\s+(\d{1,2}),\s+(\d{4})/i);
+  // Find date row: "Thursday, February 19, 2026"
   let asof = null;
-  if (dateMatch) {
-    const months = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12};
-    const mo = months[dateMatch[1].toLowerCase()];
-    asof = `${dateMatch[3]}-${String(mo).padStart(2,'0')}-${String(parseInt(dateMatch[2])).padStart(2,'0')}`;
+  for (const row of rows) {
+    const dateMatch = row.match(/\w+day,?\s+(\w+)\s+(\d{1,2}),?\s+(\d{4})/i);
+    if (dateMatch) {
+      const months = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12};
+      const mo = months[dateMatch[1].toLowerCase()];
+      if (mo) {
+        asof = `${dateMatch[3]}-${String(mo).padStart(2,'0')}-${String(parseInt(dateMatch[2])).padStart(2,'0')}`;
+        break;
+      }
+    }
   }
 
   // Find Non-Fatal Shooting row
-  let nfsIdx = -1;
-  for (let i = 0; i < tokens.length; i++) {
-    if (tokens[i].match(/^Non.?Fatal$/i) && tokens[i+1]?.match(/^Shooting/i)) { nfsIdx = i; break; }
-    if (tokens[i].match(/^Non.?Fatal\s+Shooting/i)) { nfsIdx = i; break; }
-  }
-  if (nfsIdx === -1) throw new Error('Non-Fatal Shooting row not found. Tokens: ' + tokens.slice(0,60).join('|'));
+  const nfsRow = rows.find(r => r.match(/Non.?Fatal\s+Shooting/i));
+  if (!nfsRow) throw new Error('Non-Fatal Shooting row not found. Rows: ' + rows.join(' | '));
 
-  const nums = [];
-  for (let j = nfsIdx+1; j < tokens.length && nums.length < 5; j++) {
-    if (/^-?[\d,]+$/.test(tokens[j])) nums.push(parseInt(tokens[j].replace(/,/g,'')));
-  }
-  if (nums.length < 4) throw new Error(`Not enough numbers: ${nums.join(',')}`);
+  // Extract numbers from the row: [priorDay, prior7Days, ytd26, ytd25, change, ...]
+  const nums = [...nfsRow.matchAll(/-?[\d,]+/g)]
+    .map(m => parseInt(m[0].replace(/,/g,'')))
+    .filter(n => !isNaN(n));
 
-  // [priorDay, prior7Days, ytd_current, ytd_prior]
+  console.log('Detroit NFS row:', nfsRow, 'nums:', nums);
+  if (nums.length < 4) throw new Error(`Not enough numbers in NFS row: ${nums.join(',')} | row: ${nfsRow}`);
   return { ytd: nums[2], prior: nums[3], asof };
 }
 
@@ -137,32 +186,44 @@ async function fetchDurham() {
   const mo = months[dateMatch[1].toLowerCase()];
   const asof = `${dateMatch[3]}-${String(mo).padStart(2,'0')}-${String(parseInt(dateMatch[2])).padStart(2,'0')}`;
 
-  // Find Fatal and Non-Fatal labels, grab 3 numbers after each (2024, 2025, 2026)
-  const fatalIdx = tokens.findIndex(t => t.match(/^Fatal$/i));
-  const nonfatalIdx = tokens.findIndex((t,i) => t.match(/^Non.?Fatal$/i) && i > fatalIdx);
+  // All numbers in the chart appear left-to-right across all groups:
+  // Shootings: 84(2024) 77(2025) 53(2026)
+  // Persons Shot: 16(2024) 21(2025) 18(2026)
+  // Fatal: 4(2024) 3(2025) 6(2026)
+  // Non-Fatal: 12(2024) 18(2025) 12(2026)
+  // We want Fatal[2026] + NonFatal[2026] = indices [8] and [11] in the number sequence
+  // And Fatal[2025] + NonFatal[2025] = indices [7] and [10]
 
-  function grab3(startIdx) {
-    const nums = [];
-    for (let i = startIdx+1; i < tokens.length && nums.length < 3; i++) {
-      if (/^\d+$/.test(tokens[i])) nums.push(parseInt(tokens[i]));
+  const allNums = tokens
+    .filter(t => /^\d+$/.test(t) && parseInt(t) >= 1 && parseInt(t) <= 500)
+    .map(Number);
+
+  console.log('Durham all nums:', allNums);
+
+  // Need at least 12 numbers (4 groups × 3 years)
+  if (allNums.length < 12) throw new Error('Not enough chart numbers: ' + allNums.join(','));
+
+  // Find the block of 12 chart numbers by looking for the sequence starting with Shootings
+  // The largest numbers should be the Shootings group
+  // Try to find where the 12-number block starts
+  let startIdx = 0;
+  for (let i = 0; i <= allNums.length - 12; i++) {
+    // Shootings values are typically the largest (>30), Fatal/NonFatal are smaller (<30)
+    // Check if nums[i..i+2] are all > nums[i+6..i+11] (Shootings > Fatal/NonFatal)
+    const shooting = allNums.slice(i, i+3);
+    const fatal = allNums.slice(i+6, i+9);
+    const nonfatal = allNums.slice(i+9, i+12);
+    if (shooting.every(n => n > 20) && fatal.every(n => n < 30) && nonfatal.every(n => n < 30)) {
+      startIdx = i;
+      break;
     }
-    return nums;
   }
 
-  const fatal3    = fatalIdx    !== -1 ? grab3(fatalIdx)    : [];
-  const nonfatal3 = nonfatalIdx !== -1 ? grab3(nonfatalIdx) : [];
-
-  let ytd, prior;
-  if (fatal3.length === 3 && nonfatal3.length === 3) {
-    ytd   = fatal3[2] + nonfatal3[2]; // 2026
-    prior = fatal3[1] + nonfatal3[1]; // 2025
-  } else {
-    // Positional fallback
-    const allNums = tokens.filter(t => /^\d+$/.test(t) && parseInt(t) < 500).map(Number);
-    if (allNums.length < 12) throw new Error('Not enough numbers: ' + allNums.join(','));
-    ytd   = allNums[8]  + allNums[11];
-    prior = allNums[7]  + allNums[10];
-  }
+  const chartNums = allNums.slice(startIdx, startIdx + 12);
+  console.log('Durham chart nums (startIdx=' + startIdx + '):', chartNums);
+  // [Shoot24, Shoot25, Shoot26, PShot24, PShot25, PShot26, Fatal24, Fatal25, Fatal26, NF24, NF25, NF26]
+  const ytd   = chartNums[8] + chartNums[11]; // Fatal2026 + NonFatal2026
+  const prior = chartNums[7] + chartNums[10]; // Fatal2025 + NonFatal2025
 
   return { ytd, prior, asof, adid: latestAdid };
 }
@@ -203,4 +264,3 @@ async function main() {
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
-
