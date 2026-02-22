@@ -811,15 +811,22 @@ var CITIES = [
   {
     id: 'pittsburgh',
     name: 'Pittsburgh, PA',
-    note: 'Shooting Victims (Manual)',
+    note: 'Shooting Victims (Homicide + Non-Fatal, Gun)',
     type: 'Victims',
-    manual: true,
     dataUrl: 'https://app.powerbigov.us/view?r=eyJrIjoiMDYzNWMyNGItNWNjMS00ODMwLWIxZDgtMTNkNzhlZDE2OWFjIiwidCI6ImY1ZjQ3OTE3LWM5MDQtNDM2OC05MTIwLWQzMjdjZjE3NTU5MSJ9',
     count: async function(s, e) {
+      var auto = await loadAutoData();
+      if (auto.pittsburgh && auto.pittsburgh.ok) {
+        var windowYear = parseInt(s.slice(0,4));
+        var asofYear = auto.pittsburgh.asof ? parseInt(auto.pittsburgh.asof.slice(0,4)) : CURRENT_YEAR;
+        return windowYear === asofYear ? auto.pittsburgh.ytd : auto.pittsburgh.prior;
+      }
       var key = 'manual_' + this.id + '_' + s.slice(0,4);
       try { var r = await window.storage.get(key); return r ? parseInt(r.value) : null; } catch(e) { return null; }
     },
     latest: async function() {
+      var auto = await loadAutoData();
+      if (auto.pittsburgh && auto.pittsburgh.ok && auto.pittsburgh.asof) return auto.pittsburgh.asof;
       try { var r = await window.storage.get('manual_' + this.id + '_asof'); return r ? r.value : null; } catch(e) { return null; }
     }
   },
