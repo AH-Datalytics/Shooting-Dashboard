@@ -2,27 +2,29 @@
   "detroit": {
     "ytd": 34,
     "prior": 50,
-    "asof": null,
-    "fetchedAt": "2026-02-22T21:53:23.086Z",
+    "asof": "2026-02-19",
+    "fetchedAt": "2026-02-22T21:57:53.428Z",
     "ok": true
   },
   "durham": {
-    "ok": false,
-    "error": "Could not parse Durham chart values from vision API. Response: I can see the message \"Couldn't load plugin\" displayed on the screen, which means the chart content is not actually visible or loaded. I cannot read any data from the bars you're referring to.",
-    "fetchedAt": "2026-02-22T21:53:23.086Z"
+    "ytd": 12,
+    "prior": 18,
+    "asof": "2026-02-14",
+    "fetchedAt": "2026-02-22T21:57:53.428Z",
+    "ok": true
   },
   "milwaukee": {
     "ytd": 39,
     "prior": 54,
     "asof": "2026-02-19",
-    "fetchedAt": "2026-02-22T21:53:23.086Z",
+    "fetchedAt": "2026-02-22T21:57:53.428Z",
     "ok": true
   },
   "memphis": {
     "ytd": 69,
     "prior": 92,
     "asof": "2026-02-21",
-    "fetchedAt": "2026-02-22T21:53:23.086Z",
+    "fetchedAt": "2026-02-22T21:57:53.428Z",
     "ok": true
   }
 }
