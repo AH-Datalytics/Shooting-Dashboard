@@ -578,7 +578,100 @@ async function fetchPittsburgh() {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-async function main() {
+// ─── Omaha ─────────────────────────────────────────────────────────────────────
+// Fetches the OPD Non-Fatal Shootings and Homicides PDF and sums YTD V columns
+
+async function fetchOmaha() {
+  const pageRes = await fetchUrl('https://police.cityofomaha.org/opd-crime-statistics', 25000);
+  const html = pageRes.body.toString('utf8');
+
+  // Find link to the Non-Fatal Shootings and Homicides PDF
+  const pdfMatch = html.match(/href="([^"]*(?:non.?fatal|nonfatal|shooting[^"]*homicide|homicide[^"]*shooting)[^"]*\.pdf)"/i)
+    || html.match(/href="([^"]*opd[^"]*\.pdf)"/i)
+    || html.match(/href="([^"]*\.pdf)"/i);
+
+  if (!pdfMatch) throw new Error('Could not find Omaha PDF link on stats page');
+
+  let pdfUrl = pdfMatch[1];
+  if (!pdfUrl.startsWith('http')) {
+    pdfUrl = 'https://police.cityofomaha.org' + (pdfUrl.startsWith('/') ? '' : '/') + pdfUrl;
+  }
+  console.log('Omaha PDF URL:', pdfUrl);
+
+  const pdfRes = await fetchUrl(pdfUrl, 30000);
+  const pdfBuf = pdfRes.body;
+
+  // Parse all pages to find the YTD row for current year
+  let pdfjsLib;
+  try { pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js'); }
+  catch(e) { pdfjsLib = require(require('path').join(__dirname, '..', 'node_modules', 'pdfjs-dist', 'legacy', 'build', 'pdf.js')); }
+
+  const loadTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfBuf) });
+  const pdfDoc = await loadTask.promise;
+
+  let allText = '';
+  for (let p = 1; p <= pdfDoc.numPages; p++) {
+    const page = await pdfDoc.getPage(p);
+    const tc = await page.getTextContent();
+    allText += tc.items.map(i => i.str).join(' ') + '\n';
+  }
+
+  // The PDF has rows like: 2026  NFS_I  NFS_V  HOM_I  HOM_V  (per month, then YTD at end)
+  // Strategy: find the "Last update" date for asof, then find the current year YTD values
+  const yr = new Date().getFullYear();
+
+  // Extract asof from "Last update: Non-Fatal Shootings M/D/YYYY"
+  const asofMatch = allText.match(/Last update[:\s]+Non-Fatal Shootings\s+(\d{1,2})\/(\d{1,2})\/(\d{4})/i)
+    || allText.match(/Last update[:\s]+\S+\s+(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
+  let asof = null;
+  if (asofMatch) {
+    const [, m, d, y] = asofMatch;
+    asof = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+  }
+  console.log('Omaha asof:', asof);
+
+  // Extract tokens as numbers for parsing
+  // The table structure per year row: YEAR NFS_I NFS_V HOM_I HOM_V (repeated per month) ... YTD_NFS_I YTD_NFS_V YTD_HOM_I YTD_HOM_V
+  // We need the YTD column which is the last set of 4 numbers in the current year row
+  // Find the year row: look for "2026" followed by sequences of numbers
+  const tokens = allText.replace(/\s+/g, ' ').split(' ');
+  
+  // Find index of the current year
+  const yrIdx = tokens.findIndex(t => t === String(yr));
+  const priorYrIdx = tokens.findIndex(t => t === String(yr - 1));
+
+  function extractYtdFromRow(startIdx) {
+    if (startIdx < 0) return null;
+    // Collect all numeric tokens in this year's row until next 4-digit year or end
+    const nums = [];
+    for (let i = startIdx + 1; i < tokens.length && i < startIdx + 200; i++) {
+      const t = tokens[i];
+      if (/^\d{4}$/.test(t) && parseInt(t) >= 2020) break; // next year row
+      if (/^\d+$/.test(t)) nums.push(parseInt(t));
+    }
+    // YTD is the last 4 numbers: NFS_I, NFS_V, HOM_I, HOM_V
+    if (nums.length >= 4) {
+      const last4 = nums.slice(-4);
+      return { nfsV: last4[1], homV: last4[3] };
+    }
+    return null;
+  }
+
+  const ytdData   = extractYtdFromRow(yrIdx);
+  const priorData = extractYtdFromRow(priorYrIdx);
+
+  console.log(`Omaha ytd data:`, ytdData, `prior data:`, priorData);
+
+  if (!ytdData) throw new Error('Could not parse Omaha YTD row for ' + yr);
+
+  return {
+    ytd:   ytdData.nfsV + ytdData.homV,
+    prior: priorData ? priorData.nfsV + priorData.homV : null,
+    asof
+  };
+}
+
+
   const results = {};
   const fetchedAt = new Date().toISOString();
 
@@ -630,6 +723,16 @@ async function main() {
   } catch (e) {
     console.error('Hampton error:', e.message);
     results.hampton = { ok: false, error: e.message, fetchedAt };
+  }
+
+  // Omaha
+  try {
+    console.log('\n--- Fetching Omaha ---');
+    results.omaha = { ...(await fetchOmaha()), fetchedAt, ok: true };
+    console.log('Omaha:', results.omaha);
+  } catch (e) {
+    console.error('Omaha error:', e.message);
+    results.omaha = { ok: false, error: e.message, fetchedAt };
   }
 
   // Pittsburgh (90s hard timeout to prevent hanging)
