@@ -110,6 +110,8 @@
 
   .manual-row { background: rgba(226,255,85,0.03); }
   .manual-row:hover { background: rgba(226,255,85,0.06) !important; }
+  .divider-row td { padding: 6px 16px; border-bottom: 1px solid var(--border2); }
+  .divider-row span { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); letter-spacing: 1px; }
   .manual-btn {
     font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 1px;
     text-transform: uppercase; padding: 4px 10px; border: 1px solid var(--border2);
@@ -1180,13 +1182,21 @@ function render() {
     return (va - vb) * sortDir;
   });
 
+  var firstManualSeen = false;
   tbody.innerHTML = rows.map(function(row) {
     var city = row.city;
     var s = row.s;
     var chgVal = row.chgVal;
 
+    // Insert divider before first manual city when in default order
+    var divider = '';
+    if (city.manual && !firstManualSeen && sortField === 'ytd' && sortDir === -1) {
+      firstManualSeen = true;
+      divider = '<tr class="divider-row"><td colspan="6"><span>── MANUAL ENTRY ──────────────────────────</span></td></tr>';
+    }
+
     if (s.status === 'loading') {
-      return '<tr><td><div class="city-name"><span class="dot dot-loading"></span>' + city.name + '</div><div class="city-note">' + city.note + '</div></td>' +
+      return divider + '<tr><td><div class="city-name"><span class="dot dot-loading"></span>' + city.name + '</div><div class="city-note">' + city.note + '</div></td>' +
         '<td class="num"><span class="sk" style="width:52px"></span></td>' +
         '<td class="num"><span class="sk" style="width:52px"></span></td>' +
         '<td class="chg"><span class="sk" style="width:60px"></span></td>' +
@@ -1194,7 +1204,7 @@ function render() {
     }
 
     if (s.status === 'error') {
-      return '<tr><td><div class="city-name"><span class="dot dot-error"></span>' + city.name + '</div><div class="city-note">' + city.note + '</div></td>' +
+      return divider + '<tr><td><div class="city-name"><span class="dot dot-error"></span>' + city.name + '</div><div class="city-note">' + city.note + '</div></td>' +
         '<td colspan="4"><span class="err-msg">' + (s.err || 'Fetch failed') + '</span></td><td class="type-badge"></td></tr>';
     }
 
@@ -1207,7 +1217,7 @@ function render() {
     }
 
     var manualBtn = city.manual ? ' <button class="manual-btn" onclick="openManual(\'' + city.id + '\')" title="Edit">✎ Edit</button>' + (city.dataUrl ? ' <a class="manual-btn" href="' + city.dataUrl + '" target="_blank" title="Open source">↗ Source</a>' : '') : '';
-    return '<tr' + (city.manual ? ' class="manual-row"' : '') + '>' +
+    return divider + '<tr' + (city.manual ? ' class="manual-row"' : '') + '>' +
       '<td><div class="city-name"><span class="dot dot-ok"></span>' + city.name + manualBtn + '</div><div class="city-note">' + city.note + '</div></td>' +
       '<td class="num">' + (s.ytd != null ? s.ytd.toLocaleString() : '—') + '</td>' +
       '<td class="num" style="color:var(--muted2)">' + (s.prior != null ? s.prior.toLocaleString() : '—') + '<div style="font-family:var(--muted);font-size:9px;color:var(--muted);margin-top:2px">thru ' + (s.priorEnd || '') + '</div></td>' +
