@@ -1,0 +1,39 @@
+name: Fetch Shooting Data
+
+on:
+  schedule:
+    # Run every Thursday at 6pm ET (23:00 UTC) — after Detroit publishes
+    - cron: '0 23 * * 4'
+    # Also run every day at noon UTC for Durham (weekly PDF)
+    - cron: '0 12 * * *'
+  workflow_dispatch:  # Allow manual trigger from GitHub Actions tab
+
+jobs:
+  fetch-data:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write  # Needed to commit data/manual-auto.json back to repo
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pdfjs-dist
+        run: npm install pdfjs-dist --prefix scripts
+
+      - name: Fetch shooting data
+        run: node scripts/fetch-shooting-data.js
+
+      - name: Commit updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/manual-auto.json
+          git diff --staged --quiet || git commit -m "Auto-update shooting data [$(date -u '+%Y-%m-%d %H:%M UTC')]"
+          git push
