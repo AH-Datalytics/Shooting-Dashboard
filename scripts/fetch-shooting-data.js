@@ -473,17 +473,8 @@ async function fetchPittsburgh() {
   const url = 'https://app.powerbigov.us/view?r=eyJrIjoiMDYzNWMyNGItNWNjMS00ODMwLWIxZDgtMTNkNzhlZDE2OWFjIiwidCI6ImY1ZjQ3OTE3LWM5MDQtNDM2OC05MTIwLWQzMjdjZjE3NTU5MSJ9';
   console.log('Pittsburgh: loading Power BI dashboard...');
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-  // Wait for report to load
-  try {
-    await page.waitForFunction(
-      () => document.body.innerText.includes('Non-Fatal'),
-      { timeout: 30000 }
-    );
-  } catch(e) {
-    console.log('Pittsburgh: timed out waiting for Non-Fatal, proceeding...');
-  }
-  await page.waitForTimeout(4000);
+  // Power BI Gov renders via canvas/iframe - fixed wait, no waitForFunction
+  await page.waitForTimeout(8000);
 
   // Get as-of date from page 1 header "Last Updated: M/DD/YYYY"
   const page1Text = await page.evaluate(() => document.body.innerText);
@@ -494,31 +485,24 @@ async function fetchPittsburgh() {
   }
   console.log('Pittsburgh asof:', asof);
 
-  // Navigate to page 2 - look for "Annual Stats" or page 2 button
+  // Navigate to page 2 - "Annual Stats" tab exists but may not be visible, use force click
   console.log('Pittsburgh: navigating to page 2...');
   try {
-    // Try clicking the page 2 navigation button
-    await page.locator('[aria-label="Page 2"]').first().click();
-    await page.waitForTimeout(3000);
+    await page.locator('[aria-label="Annual Stats"]').first().click({ force: true, timeout: 10000 });
+    await page.waitForTimeout(4000);
+    console.log('Pittsburgh: clicked Annual Stats tab');
   } catch(e) {
-    // Try clicking "Annual Stats" tab
-    try {
-      await page.locator('text=Annual Stats').first().click();
-      await page.waitForTimeout(3000);
-      console.log('Pittsburgh: clicked Annual Stats tab');
-    } catch(e2) {
-      console.log('Pittsburgh: could not navigate to page 2:', e2.message);
-    }
+    console.log('Pittsburgh: Annual Stats click failed:', e.message.split('\n')[0]);
   }
 
   // Click "Gun" in the Weapon Type by Incident chart to filter
   console.log('Pittsburgh: clicking Gun filter...');
   try {
-    await page.locator('text=Gun').first().click();
+    await page.locator('text=Gun').first().click({ force: true, timeout: 10000 });
     await page.waitForTimeout(3000);
     console.log('Pittsburgh: clicked Gun filter');
   } catch(e) {
-    console.log('Pittsburgh: could not click Gun:', e.message);
+    console.log('Pittsburgh: could not click Gun:', e.message.split('\n')[0]);
   }
 
   // Screenshot and send to Claude vision to extract the numbers
@@ -636,10 +620,11 @@ async function main() {
     results.hampton = { ok: false, error: e.message, fetchedAt };
   }
 
-  // Pittsburgh
+  // Pittsburgh (90s hard timeout to prevent hanging)
   try {
     console.log('\n--- Fetching Pittsburgh ---');
-    results.pittsburgh = { ...(await fetchPittsburgh()), fetchedAt, ok: true };
+    const pittTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Pittsburgh timed out after 90s')), 90000));
+    results.pittsburgh = { ...(await Promise.race([fetchPittsburgh(), pittTimeout])), fetchedAt, ok: true };
     console.log('Pittsburgh:', results.pittsburgh);
   } catch (e) {
     console.error('Pittsburgh error:', e.message);
