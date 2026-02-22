@@ -285,10 +285,25 @@ async function fetchWilmington() {
 // ─── Hampton ──────────────────────────────────────────────────────────────────
 
 async function fetchHampton() {
-  const pdfUrl = 'https://www.hampton.gov/DocumentCenter/View/31010/Gunshot-Injury-Data-?bidId=';
-  console.log('Hampton PDF URL:', pdfUrl);
-  const resp = await fetchUrl(pdfUrl);
-  if (resp.status !== 200) throw new Error(`Hampton PDF HTTP ${resp.status}`);
+  // Try both URL variants
+  const urls = [
+    'https://www.hampton.gov/DocumentCenter/View/31010/Gunshot-Injury-Data-',
+    'https://www.hampton.gov/DocumentCenter/View/31010',
+  ];
+
+  let resp = null;
+  let usedUrl = null;
+  for (const url of urls) {
+    console.log('Hampton trying URL:', url);
+    const r = await fetchUrl(url, 20000, {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      'Accept': 'application/pdf,*/*',
+    });
+    console.log('Hampton HTTP status:', r.status, 'content-type hint:', r.body.slice(0,5).toString());
+    if (r.status === 200) { resp = r; usedUrl = url; break; }
+  }
+  if (!resp) throw new Error('Hampton PDF not accessible');
+  console.log('Hampton PDF URL used:', usedUrl);
 
   const rows = await extractPdfRows(resp.body);
   console.log('Hampton rows:', rows.slice(0, 20));
