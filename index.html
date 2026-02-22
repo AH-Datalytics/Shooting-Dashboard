@@ -937,22 +937,15 @@ var CITIES = [
   {
     id: 'wilmington',
     name: 'Wilmington, DE',
-    note: 'Shooting Victims (CompStat PDF)',
+    note: 'Shooting Victims (Manual)',
     type: 'Victims',
+    manual: true,
     dataUrl: 'https://www.wilmingtonde.gov/government/public-safety/wilmington-police-department/compstat-reports',
     count: async function(s, e) {
-      var auto = await loadAutoData();
-      if (auto.wilmington && auto.wilmington.ok) {
-        var windowYear = parseInt(s.slice(0,4));
-        var asofYear = auto.wilmington.asof ? parseInt(auto.wilmington.asof.slice(0,4)) : CURRENT_YEAR;
-        return windowYear === asofYear ? auto.wilmington.ytd : auto.wilmington.prior;
-      }
       var key = 'manual_' + this.id + '_' + s.slice(0,4);
       try { var r = await window.storage.get(key); return r ? parseInt(r.value) : null; } catch(e) { return null; }
     },
     latest: async function() {
-      var auto = await loadAutoData();
-      if (auto.wilmington && auto.wilmington.ok && auto.wilmington.asof) return auto.wilmington.asof;
       try { var r = await window.storage.get('manual_' + this.id + '_asof'); return r ? r.value : null; } catch(e) { return null; }
     }
   },
@@ -963,6 +956,21 @@ var CITIES = [
     type: 'Victims',
     manual: true,
     dataUrl: 'https://www.seattle.gov/police/information-and-data/data/crime-dashboard',
+    count: async function(s, e) {
+      var key = 'manual_' + this.id + '_' + s.slice(0,4);
+      try { var r = await window.storage.get(key); return r ? parseInt(r.value) : null; } catch(e) { return null; }
+    },
+    latest: async function() {
+      try { var r = await window.storage.get('manual_' + this.id + '_asof'); return r ? r.value : null; } catch(e) { return null; }
+    }
+  },
+  {
+    id: 'buffalo',
+    name: 'Buffalo, NY',
+    note: 'Shooting Victims (Manual)',
+    type: 'Victims',
+    manual: true,
+    dataUrl: 'https://www.criminaljustice.ny.gov/crimnet/ojsa/tableau_Give_Shooting_Activity.htm',
     count: async function(s, e) {
       var key = 'manual_' + this.id + '_' + s.slice(0,4);
       try { var r = await window.storage.get(key); return r ? parseInt(r.value) : null; } catch(e) { return null; }
