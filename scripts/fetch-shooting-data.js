@@ -394,6 +394,74 @@ async function fetchMemphis() {
   };
 }
 
+// ─── Hampton (JPEG image) ─────────────────────────────────────────────────────
+
+async function fetchHampton() {
+  // Hampton posts a JPEG table at a fixed URL - use Claude vision to extract numbers
+  const jpegUrl = 'https://www.hampton.gov/DocumentCenter/View/31010/Gunshot-Injury-Data-?bidId=';
+  console.log('Hampton: fetching JPEG from', jpegUrl);
+
+  const resp = await fetchUrl(jpegUrl);
+  if (resp.status !== 200) throw new Error(`Hampton JPEG HTTP ${resp.status}`);
+
+  const base64Image = resp.body.toString('base64');
+  // Detect media type - likely JPEG but confirm
+  const mediaType = resp.body[0] === 0xFF && resp.body[1] === 0xD8 ? 'image/jpeg' : 'image/png';
+  console.log('Hampton: image size:', resp.body.length, 'bytes, type:', mediaType);
+
+  const claudeData = await new Promise((resolve, reject) => {
+    const yr = new Date().getFullYear();
+    const body = JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 256,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64Image } },
+          { type: 'text', text: `This is a Hampton VA gunshot injury data table. Find the row "Persons Injured from Gunshots (not deceased)" - that is the non-fatal shooting count. What are the YTD ${yr-1} and YTD ${yr} values in that row? Also look for any date range shown (e.g. "Jan. 1 - Feb. 14, ${yr}"). Reply with ONLY: PRIOR=N YTD=N ASOF=YYYY-MM-DD (use the end date of the range for ASOF, or null if not found)` }
+        ]
+      }]
+    });
+    const req = require('https').request({
+      hostname: 'api.anthropic.com',
+      path: '/v1/messages',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'Content-Length': Buffer.byteLength(body)
+      }
+    }, (res) => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
+        catch(e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+
+  const responseText = claudeData.content?.[0]?.text || '';
+  console.log('Hampton vision response:', responseText);
+
+  const priorMatch = responseText.match(/PRIOR=(\d+)/);
+  const ytdMatch   = responseText.match(/YTD=(\d+)/);
+  const asofMatch  = responseText.match(/ASOF=(\d{4}-\d{2}-\d{2})/);
+
+  if (!ytdMatch) throw new Error('Could not parse Hampton values. Response: ' + responseText);
+
+  return {
+    ytd:   parseInt(ytdMatch[1]),
+    prior: priorMatch ? parseInt(priorMatch[1]) : null,
+    asof:  asofMatch ? asofMatch[1] : null
+  };
+}
+
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -438,6 +506,16 @@ async function main() {
   } catch (e) {
     console.error('Memphis error:', e.message);
     results.memphis = { ok: false, error: e.message, fetchedAt };
+  }
+
+  // Hampton
+  try {
+    console.log('\n--- Fetching Hampton ---');
+    results.hampton = { ...(await fetchHampton()), fetchedAt, ok: true };
+    console.log('Hampton:', results.hampton);
+  } catch (e) {
+    console.error('Hampton error:', e.message);
+    results.hampton = { ok: false, error: e.message, fetchedAt };
   }
 
   // Write output
