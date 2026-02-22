@@ -129,10 +129,10 @@ async function fetchDetroit() {
   const rows = await extractPdfRows(resp.body);
   console.log('Detroit rows:', rows.slice(0, 20));
 
-  // Find date row: "Thursday, February 19, 2026"
+  // Find date row: "Thursday,February19,2026" or "Thursday, February 19, 2026"
   let asof = null;
   for (const row of rows) {
-    const dateMatch = row.match(/\w+day,?\s+(\w+)\s+(\d{1,2}),?\s+(\d{4})/i);
+    const dateMatch = row.match(/\w+day,?\s*(\w+)\s*(\d{1,2}),?\s*(\d{4})/i);
     if (dateMatch) {
       const months = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12};
       const mo = months[dateMatch[1].toLowerCase()];
