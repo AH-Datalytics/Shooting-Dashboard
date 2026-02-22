@@ -35,6 +35,8 @@ jobs:
         run: npx playwright install chromium
 
       - name: Fetch shooting data
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: node scripts/fetch-shooting-data.js
 
       - name: Commit updated data
