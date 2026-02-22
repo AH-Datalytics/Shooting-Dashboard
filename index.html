@@ -967,6 +967,21 @@ var CITIES = [
     }
   },
   {
+    id: 'hampton',
+    name: 'Hampton, VA',
+    note: 'Gunshot Injuries (Manual)',
+    type: 'Victims',
+    manual: true,
+    dataUrl: 'https://www.hampton.gov/DocumentCenter/View/31010/Gunshot-Injury-Data-?bidId=',
+    count: async function(s, e) {
+      var key = 'manual_' + this.id + '_' + s.slice(0,4);
+      try { var r = await window.storage.get(key); return r ? parseInt(r.value) : null; } catch(e) { return null; }
+    },
+    latest: async function() {
+      try { var r = await window.storage.get('manual_' + this.id + '_asof'); return r ? r.value : null; } catch(e) { return null; }
+    }
+  },
+  {
     id: 'miamidade',
     name: 'Miami-Dade County, FL',
     note: 'Shooting Victims (Manual)',
