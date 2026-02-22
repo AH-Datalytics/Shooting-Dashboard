@@ -2,21 +2,23 @@
   "detroit": {
     "ok": false,
     "error": "Cannot find module 'pdfjs-dist/legacy/build/pdf.js'\nRequire stack:\n- /home/runner/work/Shooting-Dashboard/Shooting-Dashboard/scripts/fetch-shooting-data.js",
-    "fetchedAt": "2026-02-22T17:23:46.297Z"
+    "fetchedAt": "2026-02-22T17:30:17.714Z"
   },
   "durham": {
     "ok": false,
     "error": "Cannot find module 'pdfjs-dist/legacy/build/pdf.js'\nRequire stack:\n- /home/runner/work/Shooting-Dashboard/Shooting-Dashboard/scripts/fetch-shooting-data.js",
-    "fetchedAt": "2026-02-22T17:23:46.297Z"
+    "fetchedAt": "2026-02-22T17:30:17.714Z"
   },
   "milwaukee": {
     "ok": false,
-    "error": "Could not find Non-Fatal Shooting YTD values.\nPage text sample: Create | Learn | Sign Up | Sign In | Register now for Tableau Conference 2026! → Get early-bird pricing | Milwaukee Police Department - Part I Crimes | by | Office of Management, Analysis & Planning | Love | Insightful | Nominate for #VOTD | Details | 16 Favorites | 454,793 Views | The Milwaukee Police Department is providing an interactive database (http://city.milwaukee.gov/crime-statistics) to enable the public to access crime in the City of Milwaukee. | First Published Date:Sep 30, 2019 | Last Published Date:Feb 20, 2026 | Published on: | city.milwaukee.gov | English (US) | Deutsch | English (UK) | English (US) | Español | Français (Canada) | Français (France) | Italiano | 日本語 | 한국어 | Nederlands | Português | Svenska | ไทย | 简体中文 | 繁體中文 | Trust | Blog | FAQ | About | Tableau Products",
-    "fetchedAt": "2026-02-22T17:23:46.297Z"
+    "error": "Could not find Non-Fatal Shooting YTD values.\nPage text sample: Create | Learn | Sign Up | Sign In | Register now for Tableau Conference 2026! → Get early-bird pricing | Milwaukee Police Department - Part I Crimes | by | Office of Management, Analysis & Planning | Love | Insightful | Nominate for #VOTD | Details | 16 Favorites | 454,795 Views | The Milwaukee Police Department is providing an interactive database (http://city.milwaukee.gov/crime-statistics) to enable the public to access crime in the City of Milwaukee. | First Published Date:Sep 30, 2019 | Last Published Date:Feb 20, 2026 | Published on: | city.milwaukee.gov | English (US) | Deutsch | English (UK) | English (US) | Español | Français (Canada) | Français (France) | Italiano | 日本語 | 한국어 | Nederlands | Português | Svenska | ไทย | 简体中文 | 繁體中文 | Trust | Blog | FAQ | About | Tableau Products",
+    "fetchedAt": "2026-02-22T17:30:17.714Z"
   },
   "memphis": {
-    "ok": false,
-    "error": "Could not find YTD. Chart text: Show keyboard shortcuts\nShow screen reader tips\nSkip to main content\nPower BI Report\n\nCity of Memphis Safer Communities Dashboard\n\nFigures are preliminary and subject to further review and analysis\n\nCrime Overview\nCrime Summary\nWeekly Crime Trend\nArrests\nCrash Map\nCVI Program Map\nMurder\nSelect a Year\n2021\n2022\n2023\n2024\n2025\n2026\nAggravated Assault\nNon-Fatal Shooting Incidents\nSexual Assault\n0\n50\n",
-    "fetchedAt": "2026-02-22T17:23:46.297Z"
+    "ytd": 116,
+    "prior": 127,
+    "asof": "2026-02-21",
+    "fetchedAt": "2026-02-22T17:30:17.714Z",
+    "ok": true
   }
 }
