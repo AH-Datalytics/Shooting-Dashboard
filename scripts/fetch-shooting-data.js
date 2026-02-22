@@ -362,8 +362,10 @@ async function fetchMemphis() {
   const yr = new Date().getFullYear();
 
   // Chart title shows "2026: 69" and "2025: 92 (-25%)" - parse directly from title
-  const ytdMatch   = chartText.match(new RegExp(yr + ':\\s*(\\d{1,4})(?!\\d)'));
-  const priorMatch = chartText.match(new RegExp((yr - 1) + ':\\s*(\\d{1,4})(?!\\d)'));
+  // Title is '2026: 692025: 92 (-25%)' - match both years in one pass
+  const bothMatch = chartText.match(new RegExp(yr + ':\\s*(\\d+)' + (yr-1) + ':\\s*(\\d+)'));
+  const ytdMatch   = bothMatch ? {1: bothMatch[1]} : null;
+  const priorMatch = bothMatch ? {1: bothMatch[2]} : null;
 
   console.log('Memphis ytdMatch:', ytdMatch && ytdMatch[0], 'priorMatch:', priorMatch && priorMatch[0]);
 
