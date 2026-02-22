@@ -213,6 +213,59 @@ async function fetchDurham() {
   return { ytd, prior, asof, adid: latestAdid };
 }
 
+// ─── Wilmington ───────────────────────────────────────────────────────────────
+
+async function fetchWilmington() {
+  const pageUrl = 'https://www.wilmingtonde.gov/government/public-safety/wilmington-police-department/compstat-reports';
+  console.log('Wilmington page URL:', pageUrl);
+  const pageResp = await fetchUrl(pageUrl);
+  if (pageResp.status !== 200) throw new Error(`Wilmington page HTTP ${pageResp.status}`);
+
+  const html = pageResp.body.toString('utf8');
+
+  // Find PDF link - look for showpublisheddocument links
+  const pdfMatch = html.match(/href="(\/home\/showpublisheddocument\/[^"]+)"/i);
+  if (!pdfMatch) throw new Error('No PDF link found on Wilmington page. HTML snippet: ' + html.slice(0, 500));
+
+  const pdfUrl = 'https://www.wilmingtonde.gov' + pdfMatch[1];
+  console.log('Wilmington PDF URL:', pdfUrl);
+
+  const pdfResp = await fetchUrl(pdfUrl);
+  if (pdfResp.status !== 200) throw new Error(`Wilmington PDF HTTP ${pdfResp.status}`);
+
+  const rows = await extractPdfRows(pdfResp.body);
+  console.log('Wilmington rows:', rows.slice(0, 25));
+
+  // Extract date from "Report Covering the Week MM/DD/YY Through MM/DD/YY"
+  // or "02/09/26 Through 02/15/26"
+  let asof = null;
+  for (const row of rows) {
+    const m = row.match(/through\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})/i);
+    if (m) {
+      const yr = m[3].length === 2 ? '20' + m[3] : m[3];
+      asof = `${yr}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
+      break;
+    }
+  }
+
+  // Find Shooting Victims row
+  // Row format: "Shooting Victims  0  0  *  4  3  33%  6  3  100%  ..."
+  const svRow = rows.find(r => r.match(/Shooting\s*Victims/i));
+  if (!svRow) throw new Error('Shooting Victims row not found. Rows: ' + rows.join(' | '));
+  console.log('Wilmington SV row:', svRow);
+
+  // Extract numbers: columns are [2026_7d, 2025_7d, %chg, 2026_28d, 2025_28d, %chg, 2026_ytd, 2025_ytd, ...]
+  const nums = [...svRow.matchAll(/-?[\d,]+/g)]
+    .map(m => parseInt(m[0].replace(/,/g, '')))
+    .filter(n => !isNaN(n));
+  console.log('Wilmington SV nums:', nums);
+
+  // YTD columns are at index 6 (2026) and 7 (2025)
+  if (nums.length < 8) throw new Error(`Not enough numbers: ${nums.join(',')}`);
+
+  return { ytd: nums[6], prior: nums[7], asof };
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -237,6 +290,16 @@ async function main() {
   } catch (e) {
     console.error('Durham error:', e.message);
     results.durham = { ok: false, error: e.message, fetchedAt };
+  }
+
+  // Wilmington
+  try {
+    console.log('\n--- Fetching Wilmington ---');
+    results.wilmington = { ...(await fetchWilmington()), fetchedAt, ok: true };
+    console.log('Wilmington:', results.wilmington);
+  } catch (e) {
+    console.error('Wilmington error:', e.message);
+    results.wilmington = { ok: false, error: e.message, fetchedAt };
   }
 
   // Write output
