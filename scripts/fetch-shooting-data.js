@@ -468,13 +468,14 @@ async function fetchPittsburgh() {
   const { chromium } = require('playwright');
   const browser = await chromium.launch({ headless: true });
   const page    = await browser.newPage();
+  await page.setViewportSize({ width: 1536, height: 768 });
   page.setDefaultTimeout(30000);
 
   const url = 'https://app.powerbigov.us/view?r=eyJrIjoiMDYzNWMyNGItNWNjMS00ODMwLWIxZDgtMTNkNzhlZDE2OWFjIiwidCI6ImY1ZjQ3OTE3LWM5MDQtNDM2OC05MTIwLWQzMjdjZjE3NTU5MSJ9';
   console.log('Pittsburgh: loading Power BI dashboard...');
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
   // Power BI Gov renders via canvas/iframe - wait generously for initial load
-  await page.waitForTimeout(15000);
+  await page.waitForTimeout(20000);
 
   // Get as-of date from page 1 header "Last Updated: M/DD/YYYY"
   const page1Text = await page.evaluate(() => document.body.innerText);
@@ -484,7 +485,7 @@ async function fetchPittsburgh() {
     asof = `${dateMatch[3]}-${dateMatch[1].padStart(2,'0')}-${dateMatch[2].padStart(2,'0')}`;
   }
   console.log('Pittsburgh asof:', asof);
-  console.log('Pittsburgh page1 snippet:', page1Text.substring(0, 200));
+  console.log('Pittsburgh page1 snippet:', page1Text.substring(0, 400));
 
   // Navigate to "Year to Date Stats" page - try multiple selectors
   console.log('Pittsburgh: navigating to Year to Date Stats page...');
@@ -493,11 +494,11 @@ async function fetchPittsburgh() {
     '[aria-label="Year to Date Stats"]',
     '[aria-label="Annual Stats"]',
     'button.sectionItem:first-child',
-    '.pbi-glyph-chevronrightmedium', // next page arrow
+    '.pbi-glyph-chevronrightmedium',
   ]) {
     try {
       await page.locator(selector).first().click({ force: true, timeout: 5000 });
-      await page.waitForTimeout(5000);
+      await page.waitForTimeout(8000);
       console.log('Pittsburgh: navigated via', selector);
       navigated = true;
       break;
@@ -505,14 +506,28 @@ async function fetchPittsburgh() {
   }
   if (!navigated) console.log('Pittsburgh: could not navigate, will screenshot current page');
 
-  // Click "Gun" in the Weapon Type by Incident legend to filter
-  console.log('Pittsburgh: clicking Gun filter...');
+  // Log what page we're on now
+  const page2Text = await page.evaluate(() => document.body.innerText);
+  console.log('Pittsburgh post-nav snippet:', page2Text.substring(0, 400));
+
+  // Click "Gun" legend dot in the Weapon Type by Incident pie chart to filter
+  // Based on dashboard layout: Gun dot is in the legend at roughly 60% across, 67% down
+  console.log('Pittsburgh: clicking Gun legend dot by coordinates...');
   try {
-    await page.locator('text=Gun').first().click({ force: true, timeout: 8000 });
-    await page.waitForTimeout(3000);
-    console.log('Pittsburgh: clicked Gun filter');
+    const vp = page.viewportSize();
+    const vpW = vp ? vp.width : 1280;
+    const vpH = vp ? vp.height : 720;
+    // Gun dot is first legend item below the pie chart center-left area
+    // From screenshot: legend is around x=640, Gun dot y~513 on 1536-wide page
+    // Scale proportionally
+    const gunX = Math.round(vpW * (635 / 1536));
+    const gunY = Math.round(vpH * (513 / 768));
+    console.log(`Pittsburgh: clicking Gun at (${gunX}, ${gunY}) on ${vpW}x${vpH} viewport`);
+    await page.mouse.click(gunX, gunY);
+    await page.waitForTimeout(5000);
+    console.log('Pittsburgh: clicked Gun dot');
   } catch(e) {
-    console.log('Pittsburgh: could not click Gun:', e.message.split('\n')[0]);
+    console.log('Pittsburgh: Gun coordinate click failed:', e.message.split('\n')[0]);
   }
 
   // Screenshot and send to Claude vision to extract the numbers
@@ -531,7 +546,7 @@ async function fetchPittsburgh() {
         role: 'user',
         content: [
           { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64Image } },
-          { type: 'text', text: `This is the Pittsburgh Violent Crimes Dashboard. I need the YTD shooting victim counts. Look for two tables: one showing "Number of Homicides" by year and one showing "Number of Non-Fatal Shootings" by year. Find the rows for ${yr} and ${yr-1} in each table, then add the homicide and non-fatal shooting numbers together for each year. If you can see those tables, reply with ONLY: YTD${yr}=N YTD${yr-1}=N. If you cannot see the data tables (only the cover/menu), reply with ONLY: NOTLOADED` }
+          { type: 'text', text: `This is the Pittsburgh Violent Crimes Dashboard on the "Year to Date Statistics" page, filtered to Gun weapon type. There are two YTD tables: "Number of Homicides" and "Number of Non-Fatal Shootings". Find the ${yr} and ${yr-1} rows in each table and add the homicide + non-fatal shooting numbers together for each year. Reply with ONLY: YTD${yr}=N YTD${yr-1}=N. If the Gun filter is not active and tables show all weapons, still report the numbers you see. If you cannot see the data tables at all, reply with ONLY: NOTLOADED` }
         ]
       }]
     });
@@ -634,7 +649,7 @@ async function main() {
   // Pittsburgh (90s hard timeout to prevent hanging)
   try {
     console.log('\n--- Fetching Pittsburgh ---');
-    const pittTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Pittsburgh timed out after 90s')), 90000));
+    const pittTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Pittsburgh timed out after 120s')), 120000));
     results.pittsburgh = { ...(await Promise.race([fetchPittsburgh(), pittTimeout])), fetchedAt, ok: true };
     console.log('Pittsburgh:', results.pittsburgh);
   } catch (e) {
