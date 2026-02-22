@@ -530,61 +530,63 @@ async function fetchPittsburgh() {
     console.log('Pittsburgh: Gun coordinate click failed:', e.message.split('\n')[0]);
   }
 
-  // Screenshot and send to Claude vision to extract the numbers
-  const screenshotBuf = await page.screenshot({ fullPage: false });
+  // Parse values directly from page text - no vision needed
+  // The accessible text contains the table data in order
+  const pageText = await page.evaluate(() => document.body.innerText);
   await browser.close();
-  console.log('Pittsburgh: screenshot size:', screenshotBuf.length, 'bytes');
 
-  const base64Image = screenshotBuf.toString('base64');
   const yr = new Date().getFullYear();
 
-  const claudeData = await new Promise((resolve, reject) => {
-    const body = JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 256,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64Image } },
-          { type: 'text', text: `This is the Pittsburgh Violent Crimes Dashboard "Year to Date Stats" page. There are TWO specific tables in the upper portion of the page: one titled "Number of Homicides" (left table) and one titled "Number of Non-Fatal Shootings" (right table). Each table has a Year column and a number column. DO NOT read from the bar chart at the bottom. Read ONLY from those two upper tables. Find the ${yr} row in each table. Add the homicide number + non-fatal shooting number together. Do the same for ${yr-1}. Reply with ONLY: YTD${yr}=N YTD${yr-1}=N. If you cannot see those two tables, reply ONLY: NOTLOADED` }
-        ]
-      }]
-    });
-    const req = require('https').request({
-      hostname: 'api.anthropic.com',
-      path: '/v1/messages',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'Content-Length': Buffer.byteLength(body)
-      }
-    }, (res) => {
-      const chunks = [];
-      res.on('data', c => chunks.push(c));
-      res.on('end', () => {
-        try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
-        catch(e) { reject(e); }
-      });
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
+  // Extract homicides: find "Number of Homicides" section, grab yr and yr-1 values
+  let homYtd = null, homPrior = null, nfsYtd = null, nfsPrior = null;
 
-  const responseText = claudeData.content?.[0]?.text || '';
-  console.log('Pittsburgh vision response:', responseText);
+  // Pattern: after "Number of Homicides", lines are: "Select Row\nYEAR\nVALUE\n..."
+  const homSection = pageText.match(/Number of Homicides[\s\S]*?Number of Non-Fatal/);
+  if (homSection) {
+    const rows = homSection[0].matchAll(/(\d{4})\n(\d+)\n/g);
+    for (const r of rows) {
+      if (parseInt(r[1]) === yr)     homYtd   = parseInt(r[2]);
+      if (parseInt(r[1]) === yr - 1) homPrior = parseInt(r[2]);
+    }
+  }
 
-  if (responseText.includes('NOTLOADED')) throw new Error('Pittsburgh dashboard did not load data tables');
+  // Pattern: after "Number of Non-Fatal Shootings"
+  const nfsSection = pageText.match(/Number of Non-Fatal Shootings[\s\S]*?(?:Last 28|YTD %|$)/);
+  if (nfsSection) {
+    const rows = nfsSection[0].matchAll(/(\d{4})\n(\d+)\n/g);
+    for (const r of rows) {
+      if (parseInt(r[1]) === yr)     nfsYtd   = parseInt(r[2]);
+      if (parseInt(r[1]) === yr - 1) nfsPrior = parseInt(r[2]);
+    }
+  }
 
-  const ytdMatch   = responseText.match(new RegExp('YTD' + yr + '=(\\d+)'));
-  const priorMatch = responseText.match(new RegExp('YTD' + (yr-1) + '=(\\d+)'));
-  if (!ytdMatch) throw new Error('Could not parse Pittsburgh values. Response: ' + responseText);
+  // Fallback: scan for year+value pairs near the table headers
+  if (homYtd === null || nfsYtd === null) {
+    // Try alternate parsing: "Select Row\n2026\n4\n-33.33%"
+    const allRows = [...pageText.matchAll(/Select Row\s+(\d{4})\s+(\d+)\s+[-\d.]+%/g)];
+    console.log('Pittsburgh fallback rows:', allRows.map(r => `${r[1]}=${r[2]}`).join(', '));
+    // First set of year rows = homicides, second set = non-fatal
+    const yrRows = allRows.filter(r => parseInt(r[1]) === yr);
+    const priorRows = allRows.filter(r => parseInt(r[1]) === yr - 1);
+    if (yrRows.length >= 2) {
+      homYtd = parseInt(yrRows[0][2]);
+      nfsYtd = parseInt(yrRows[1][2]);
+    }
+    if (priorRows.length >= 2) {
+      homPrior = parseInt(priorRows[0][2]);
+      nfsPrior = parseInt(priorRows[1][2]);
+    }
+  }
+
+  console.log(`Pittsburgh parsed: hom${yr}=${homYtd} nfs${yr}=${nfsYtd} hom${yr-1}=${homPrior} nfs${yr-1}=${nfsPrior}`);
+
+  if (homYtd === null || nfsYtd === null) {
+    throw new Error('Could not parse Pittsburgh homicide/NFS values from page text');
+  }
 
   return {
-    ytd:   parseInt(ytdMatch[1]),
-    prior: priorMatch ? parseInt(priorMatch[1]) : null,
+    ytd:   homYtd + nfsYtd,
+    prior: (homPrior !== null && nfsPrior !== null) ? homPrior + nfsPrior : null,
     asof
   };
 }
