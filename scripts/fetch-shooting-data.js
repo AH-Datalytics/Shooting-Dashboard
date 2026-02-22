@@ -43,12 +43,12 @@ function fetchUrl(targetUrl, timeoutMs = 20000) {
 
 // ─── PDF parsing ──────────────────────────────────────────────────────────────
 
-async function extractPdfTokens(buffer) {
+async function extractPdfTokens(buffer, pageNum = 1) {
   // pdfjs-dist is installed at repo root (node_modules/)
   const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
   pdfjsLib.GlobalWorkerOptions.workerSrc = false;
   const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
-  const page = await pdf.getPage(1);
+  const page = await pdf.getPage(pageNum);
   const tc = await page.getTextContent();
   const raw = tc.items.map(i => i.str).filter(s => s.length > 0);
 
@@ -106,21 +106,22 @@ async function fetchDetroit() {
     asof = `${dateMatch[3]}-${String(mo).padStart(2,'0')}-${String(parseInt(dateMatch[2])).padStart(2,'0')}`;
   }
 
-  // Find Non-Fatal Shooting row
-  let nfsIdx = -1;
-  for (let i = 0; i < tokens.length; i++) {
-    if (tokens[i].match(/^Non.?Fatal$/i) && tokens[i+1]?.match(/^Shooting/i)) { nfsIdx = i; break; }
-    if (tokens[i].match(/^Non.?Fatal\s+Shooting/i)) { nfsIdx = i; break; }
-  }
-  if (nfsIdx === -1) throw new Error('Non-Fatal Shooting row not found. Tokens: ' + tokens.slice(0,60).join('|'));
+  // Join all tokens and search for Non-Fatal Shooting row
+  // Tokens may be partially merged so search the joined string
+  const joined = tokens.join(' ');
+  const nfsMatch = joined.match(/Non.?Fatal\s*Shooting[\s\S]*?(?=\w+Homicide|\w+Sex|\w+Assault|\w+Robbery|\w+Burglary|$)/i);
+  if (!nfsMatch) throw new Error('Non-Fatal Shooting row not found. Tokens: ' + tokens.slice(0,60).join('|'));
 
+  // Extract all numbers from the matched section
   const nums = [];
-  for (let j = nfsIdx+1; j < tokens.length && nums.length < 5; j++) {
-    if (/^-?[\d,]+$/.test(tokens[j])) nums.push(parseInt(tokens[j].replace(/,/g,'')));
+  const numMatches = nfsMatch[0].matchAll(/-?[\d,]+(?:\.\d+)?/g);
+  for (const m of numMatches) {
+    const n = parseFloat(m[0].replace(/,/g, ''));
+    if (!isNaN(n) && Number.isInteger(n)) nums.push(n);
   }
-  if (nums.length < 4) throw new Error(`Not enough numbers: ${nums.join(',')}`);
+  if (nums.length < 4) throw new Error(`Not enough numbers after Non-Fatal Shooting: ${nums.join(',')}`);
 
-  // [priorDay, prior7Days, ytd_current, ytd_prior]
+  // Layout: priorDay, prior7Days, ytd_current, ytd_prior
   return { ytd: nums[2], prior: nums[3], asof };
 }
 
@@ -142,7 +143,31 @@ async function fetchDurham() {
   const pdfResp = await fetchUrl(pdfUrl);
   if (pdfResp.status !== 200) throw new Error(`Durham PDF HTTP ${pdfResp.status}`);
 
-  const tokens = await extractPdfTokens(pdfResp.body);
+  // Try page 1 for the date, then scan all pages for the data table
+  const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = false;
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(pdfResp.body) }).promise;
+  const numPages = pdf.numPages;
+  console.log('Durham PDF pages:', numPages);
+
+  // Collect tokens from all pages
+  let allTokens = [];
+  for (let p = 1; p <= numPages; p++) {
+    const pg = await pdf.getPage(p);
+    const tc = await pg.getTextContent();
+    const raw = tc.items.map(i => i.str).filter(s => s.length > 0);
+    const merged = [];
+    let run = '';
+    for (const tok of raw) {
+      if (tok.length === 1 && tok.trim().length > 0) { run += tok; }
+      else { if (run.length > 0) { merged.push(run.trim()); run = ''; } const t = tok.trim(); if (t.length > 0) merged.push(t); }
+    }
+    if (run.length > 0) merged.push(run.trim());
+    const pageTokens = [];
+    for (const t of merged) { pageTokens.push(...t.split(/\s+/).filter(x => x.length > 0)); }
+    allTokens = allTokens.concat(pageTokens);
+  }
+  const tokens = allTokens;
   const text = tokens.join(' ');
 
   const dateMatch = text.match(/through\s+(\w+)\s+(\d{1,2}),?\s+(\d{4})/i);
@@ -193,25 +218,24 @@ async function fetchMilwaukee() {
 
   const browser = await chromium.launch({ headless: true });
   const page    = await browser.newPage();
+  page.setDefaultTimeout(30000);
 
   console.log('Milwaukee: loading Tableau dashboard...');
   await page.goto(
     'https://public.tableau.com/views/MilwaukeePoliceDepartment-PartICrimes/MPDPublicCrimeDashboard',
-    { waitUntil: 'networkidle', timeout: 60000 }
+    { waitUntil: 'domcontentloaded', timeout: 60000 }
   );
 
-  // Wait for the table to render — look for "Non-Fatal" text in the viz
-  await page.waitForFunction(() => {
-    const frames = Array.from(document.querySelectorAll('iframe'));
-    for (const f of frames) {
-      try {
-        const text = f.contentDocument?.body?.innerText || '';
-        if (text.includes('Non-Fatal')) return true;
-      } catch(e) {}
-    }
-    // Also check top-level
-    return document.body.innerText.includes('Non-Fatal');
-  }, { timeout: 30000 });
+  // Wait up to 30 seconds for "Non-Fatal" to appear anywhere on the page
+  try {
+    await page.waitForFunction(
+      () => document.body.innerText.includes('Non-Fatal'),
+      { timeout: 30000 }
+    );
+  } catch(e) {
+    console.log('Milwaukee: Non-Fatal not found after 30s, proceeding anyway...');
+  }
+  await page.waitForTimeout(3000);
 
   // Extract the as-of date from "Data Current Through: M/D/YYYY"
   const fullText = await page.evaluate(() => document.body.innerText);
@@ -254,6 +278,74 @@ async function fetchMilwaukee() {
   return { ytd, prior, asof };
 }
 
+// ─── Memphis (Power BI) ───────────────────────────────────────────────────────
+
+async function fetchMemphis() {
+  const { chromium } = require('playwright');
+  const browser = await chromium.launch({ headless: true });
+  const page    = await browser.newPage();
+  page.setDefaultTimeout(30000);
+
+  console.log('Memphis: loading Power BI dashboard...');
+  await page.goto(
+    'https://app.powerbigov.us/view?r=eyJrIjoiZTYyYmQ0Y2QtZTM0Ni00ZTFiLThkMjMtOTYxYWZiOWUyZDU4IiwidCI6IjQxNjQ3NTYxLTY1MzctNDQyMy05NmE5LTg1OWU4OWY4OTE5ZiJ9',
+    { waitUntil: 'domcontentloaded', timeout: 60000 }
+  );
+
+  // Wait for Power BI content to render
+  try {
+    await page.waitForFunction(
+      () => document.body.innerText.includes('Crime Overview'),
+      { timeout: 30000 }
+    );
+  } catch(e) {
+    console.log('Memphis: Crime Overview not found after 30s, proceeding anyway...');
+  }
+  await page.waitForTimeout(5000);
+
+  // Grab as-of date from page 1: "Data through 2/21/2026" bottom right
+  const page1Text = await page.evaluate(() => document.body.innerText);
+  console.log('Memphis page1 sample:', page1Text.substring(0, 400));
+  let asof = null;
+  const dateMatch = page1Text.match(/Data through\s+(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
+  if (dateMatch) {
+    asof = dateMatch[3] + '-' + dateMatch[1].padStart(2,'0') + '-' + dateMatch[2].padStart(2,'0');
+    console.log('Memphis as-of:', asof);
+  }
+
+  // Click Crime Summary tab
+  console.log('Memphis: clicking Crime Summary tab...');
+  try {
+    await page.getByText('Crime Summary').first().click();
+  } catch(e) {
+    await page.locator('text=Crime Summary').first().click();
+  }
+  await page.waitForTimeout(4000);
+
+  // Click Non-Fatal Shooting button
+  console.log('Memphis: clicking Non-Fatal Shooting...');
+  await page.locator('text=Non-Fatal').first().click();
+  await page.waitForTimeout(4000);
+
+  // Read chart - shows "2026: 69" and "2025: 92 (-25%)"
+  const chartText = await page.evaluate(() => document.body.innerText);
+  console.log('Memphis chart sample:', chartText.substring(0, 600));
+
+  await browser.close();
+
+  const yr  = new Date().getFullYear();
+  const ytdMatch   = chartText.match(new RegExp(yr + ':\s*(\d+)'));
+  const priorMatch = chartText.match(new RegExp((yr-1) + ':\s*(\d+)'));
+
+  if (!ytdMatch) throw new Error('Could not find YTD. Chart text: ' + chartText.substring(0, 400));
+
+  return {
+    ytd:   parseInt(ytdMatch[1]),
+    prior: priorMatch ? parseInt(priorMatch[1]) : null,
+    asof
+  };
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -288,6 +380,16 @@ async function main() {
   } catch (e) {
     console.error('Milwaukee error:', e.message);
     results.milwaukee = { ok: false, error: e.message, fetchedAt };
+  }
+
+  // Memphis
+  try {
+    console.log('\n--- Fetching Memphis ---');
+    results.memphis = { ...(await fetchMemphis()), fetchedAt, ok: true };
+    console.log('Memphis:', results.memphis);
+  } catch (e) {
+    console.error('Memphis error:', e.message);
+    results.memphis = { ok: false, error: e.message, fetchedAt };
   }
 
   // Write output
