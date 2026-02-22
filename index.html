@@ -883,15 +883,21 @@ var CITIES = [
   {
     id: 'milwaukee',
     name: 'Milwaukee, WI',
-    note: 'Non-Fatal Shooting Victims (Manual)',
+    note: 'Non-Fatal Shootings (Tableau)',
     type: 'Non-Fatal',
-    manual: true,
-    dataUrl: 'https://city.milwaukee.gov/police/Information-Services/Crime-Maps-and-Statistics',
     count: async function(s, e) {
+      var auto = await loadAutoData();
+      if (auto.milwaukee && auto.milwaukee.ok) {
+        var windowYear = parseInt(s.slice(0,4));
+        var asofYear = auto.milwaukee.asof ? parseInt(auto.milwaukee.asof.slice(0,4)) : CURRENT_YEAR;
+        return windowYear === asofYear ? auto.milwaukee.ytd : auto.milwaukee.prior;
+      }
       var key = 'manual_' + this.id + '_' + s.slice(0,4);
       try { var r = await window.storage.get(key); return r ? parseInt(r.value) : null; } catch(e) { return null; }
     },
     latest: async function() {
+      var auto = await loadAutoData();
+      if (auto.milwaukee && auto.milwaukee.ok && auto.milwaukee.asof) return auto.milwaukee.asof;
       try { var r = await window.storage.get('manual_' + this.id + '_asof'); return r ? r.value : null; } catch(e) { return null; }
     }
   },
