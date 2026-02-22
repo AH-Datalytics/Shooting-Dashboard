@@ -1052,9 +1052,6 @@ async function fetchAll() {
   var done = 0;
   setProgress(0.02);
 
-  // Probe Chicago field names first
-  CITIES[0].probe();
-
   var promises = CITIES.map(async function(city) {
     // Manual cities: load from storage directly
     if (city.manual) {
