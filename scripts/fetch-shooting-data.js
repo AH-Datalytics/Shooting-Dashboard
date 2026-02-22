@@ -50,7 +50,30 @@ async function extractPdfTokens(buffer) {
   const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
   const page = await pdf.getPage(1);
   const tc = await page.getTextContent();
-  return tc.items.map(i => i.str.trim()).filter(s => s.length > 0);
+  const raw = tc.items.map(i => i.str).filter(s => s.length > 0);
+
+  // Collapse runs of single characters caused by custom font encoding
+  // e.g. ['N','o','n','-','F','a','t','a','l'] -> ['Non-Fatal']
+  const merged = [];
+  let run = '';
+  for (const tok of raw) {
+    if (tok.length === 1 && tok.trim().length > 0) {
+      run += tok;
+    } else {
+      if (run.length > 0) { merged.push(run.trim()); run = ''; }
+      const t = tok.trim();
+      if (t.length > 0) merged.push(t);
+    }
+  }
+  if (run.length > 0) merged.push(run.trim());
+
+  // Further pass: re-split merged tokens on whitespace in case multiple words merged
+  const tokens = [];
+  for (const t of merged) {
+    const parts = t.split(/\s+/).filter(p => p.length > 0);
+    tokens.push(...parts);
+  }
+  return tokens;
 }
 
 // ─── Detroit ──────────────────────────────────────────────────────────────────
@@ -131,10 +154,17 @@ async function fetchDurham() {
   const fatalIdx    = tokens.findIndex(t => t.match(/^Fatal$/i));
   const nonfatalIdx = tokens.findIndex((t,i) => t.match(/^Non.?Fatal$/i) && i > fatalIdx);
 
+  // Grab exactly 3 YTD numbers after a label - only accept values < 2000
+  // (YTD shooting counts won't be >2000; all-time totals would be much higher)
   function grab3(startIdx) {
     const nums = [];
     for (let i = startIdx+1; i < tokens.length && nums.length < 3; i++) {
-      if (/^\d+$/.test(tokens[i])) nums.push(parseInt(tokens[i]));
+      if (/^\d+$/.test(tokens[i])) {
+        const n = parseInt(tokens[i]);
+        if (n < 2000) nums.push(n);
+      }
+      // Stop if we hit the next section label
+      if (nums.length === 0 && tokens[i].match(/^(Fatal|Non|Shooting|Total|Year)/i) && i > startIdx+2) break;
     }
     return nums;
   }
@@ -142,15 +172,15 @@ async function fetchDurham() {
   const fatal3    = fatalIdx    !== -1 ? grab3(fatalIdx)    : [];
   const nonfatal3 = nonfatalIdx !== -1 ? grab3(nonfatalIdx) : [];
 
+  console.log('Durham fatal3:', fatal3, 'nonfatal3:', nonfatal3);
+
   let ytd, prior;
-  if (fatal3.length === 3 && nonfatal3.length === 3) {
-    ytd   = fatal3[2] + nonfatal3[2];
-    prior = fatal3[1] + nonfatal3[1];
+  if (fatal3.length >= 2 && nonfatal3.length >= 2) {
+    // Columns are [2024_ytd, 2025_ytd, 2026_ytd] - take last two available
+    ytd   = fatal3[fatal3.length-1]    + nonfatal3[nonfatal3.length-1];
+    prior = fatal3[fatal3.length-2]    + nonfatal3[nonfatal3.length-2];
   } else {
-    const allNums = tokens.filter(t => /^\d+$/.test(t) && parseInt(t) < 500).map(Number);
-    if (allNums.length < 12) throw new Error('Not enough numbers: ' + allNums.join(','));
-    ytd   = allNums[8]  + allNums[11];
-    prior = allNums[7]  + allNums[10];
+    throw new Error('Could not parse Durham fatal/nonfatal nums. fatal3=' + fatal3.join(',') + ' nonfatal3=' + nonfatal3.join(',') + ' tokens=' + tokens.slice(0,50).join('|'));
   }
 
   return { ytd, prior, asof, adid: latestAdid };
