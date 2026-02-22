@@ -308,16 +308,6 @@ async function main() {
     results.durham = { ok: false, error: e.message, fetchedAt };
   }
 
-  // Wilmington
-  try {
-    console.log('\n--- Fetching Wilmington ---');
-    results.wilmington = { ...(await fetchWilmington()), fetchedAt, ok: true };
-    console.log('Wilmington:', results.wilmington);
-  } catch (e) {
-    console.error('Wilmington error:', e.message);
-    results.wilmington = { ok: false, error: e.message, fetchedAt };
-  }
-
   // Write output
   const outDir = path.join(__dirname, '..', 'data');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
