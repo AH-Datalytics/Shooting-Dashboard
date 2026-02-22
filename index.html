@@ -970,15 +970,23 @@ var CITIES = [
   {
     id: 'wilmington',
     name: 'Wilmington, DE',
-    note: 'Shooting Victims (Manual)',
+    note: 'Shooting Victims (CompStat PDF)',
     type: 'Victims',
     manual: true,
     dataUrl: 'https://www.wilmingtonde.gov/government/public-safety/wilmington-police-department/compstat-reports',
     count: async function(s, e) {
+      var auto = await loadAutoData();
+      if (auto.wilmington && auto.wilmington.ok) {
+        var windowYear = parseInt(s.slice(0,4));
+        var asofYear = auto.wilmington.asof ? parseInt(auto.wilmington.asof.slice(0,4)) : CURRENT_YEAR;
+        return windowYear === asofYear ? auto.wilmington.ytd : auto.wilmington.prior;
+      }
       var key = 'manual_' + this.id + '_' + s.slice(0,4);
       try { var r = await window.storage.get(key); return r ? parseInt(r.value) : null; } catch(e) { return null; }
     },
     latest: async function() {
+      var auto = await loadAutoData();
+      if (auto.wilmington && auto.wilmington.ok && auto.wilmington.asof) return auto.wilmington.asof;
       try { var r = await window.storage.get('manual_' + this.id + '_asof'); return r ? r.value : null; } catch(e) { return null; }
     }
   },
@@ -1101,8 +1109,8 @@ async function fetchAll() {
       try {
         var mYtd   = await city.count(w.start, w.end);
         var mAsof  = await city.latest();
-        var mPrior = null;
-        try { var pr = await window.storage.get('manual_' + city.id + '_' + (year-1)); mPrior = pr ? parseInt(pr.value) : null; } catch(e) {}
+        // Prior: try auto-fetched data first via city.count, then storage
+        var mPrior = await city.count(w.priorStart, w.priorEnd);
         var mPriorEnd = mAsof ? (year - 1) + mAsof.slice(4) : null;
         state[city.id] = { status: 'ok', ytd: mYtd, prior: mPrior, asof: mAsof, priorEnd: mPriorEnd };
       } catch(e) {
