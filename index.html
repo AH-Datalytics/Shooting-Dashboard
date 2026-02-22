@@ -868,15 +868,22 @@ var CITIES = [
   {
     id: 'memphis',
     name: 'Memphis, TN',
-    note: 'Shooting Victims (Manual)',
+    note: 'Non-Fatal Shooting Incidents (Power BI)',
     type: 'Non-Fatal',
-    manual: true,
     dataUrl: 'https://app.powerbigov.us/view?r=eyJrIjoiZTYyYmQ0Y2QtZTM0Ni00ZTFiLThkMjMtOTYxYWZiOWUyZDU4IiwidCI6IjQxNjQ3NTYxLTY1MzctNDQyMy05NmE5LTg1OWU4OWY4OTE5ZiJ9',
     count: async function(s, e) {
+      var auto = await loadAutoData();
+      if (auto.memphis && auto.memphis.ok) {
+        var windowYear = parseInt(s.slice(0,4));
+        var asofYear = auto.memphis.asof ? parseInt(auto.memphis.asof.slice(0,4)) : CURRENT_YEAR;
+        return windowYear === asofYear ? auto.memphis.ytd : auto.memphis.prior;
+      }
       var key = 'manual_' + this.id + '_' + s.slice(0,4);
       try { var r = await window.storage.get(key); return r ? parseInt(r.value) : null; } catch(e) { return null; }
     },
     latest: async function() {
+      var auto = await loadAutoData();
+      if (auto.memphis && auto.memphis.ok && auto.memphis.asof) return auto.memphis.asof;
       try { var r = await window.storage.get('manual_' + this.id + '_asof'); return r ? r.value : null; } catch(e) { return null; }
     }
   },
