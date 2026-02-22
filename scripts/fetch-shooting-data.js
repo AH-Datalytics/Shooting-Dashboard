@@ -161,13 +161,16 @@ async function fetchDurham() {
     if (mo) asof = `${dateMatch[3]}-${String(mo).padStart(2,'0')}-${String(parseInt(dateMatch[2])).padStart(2,'0')}`;
   }
 
-  // Render first page to PNG using Playwright, then send to Claude vision API
+  // Render PDF as image using Playwright - embed PDF bytes as data URI to avoid download trigger
   const { chromium } = require('playwright');
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
-  await page.goto(pdfUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(2000);
-  const screenshotBuf = await page.screenshot({ fullPage: true });
+  // Embed PDF in an HTML page so Playwright renders it without triggering download
+  const pdfBase64 = pdfResp.body.toString('base64');
+  const htmlContent = `<html><body style="margin:0"><embed src="data:application/pdf;base64,${pdfBase64}" width="1200" height="900" type="application/pdf"></body></html>`;
+  await page.setContent(htmlContent, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(3000);
+  const screenshotBuf = await page.screenshot({ fullPage: false });
   await browser.close();
 
   const base64Image = screenshotBuf.toString('base64');
@@ -232,7 +235,6 @@ async function fetchDurham() {
 
 async function fetchMilwaukee() {
   const { chromium } = require('playwright');
-
   const browser = await chromium.launch({ headless: true });
   const page    = await browser.newPage();
   page.setDefaultTimeout(30000);
@@ -243,7 +245,7 @@ async function fetchMilwaukee() {
     { waitUntil: 'domcontentloaded', timeout: 60000 }
   );
 
-  // Wait up to 30 seconds for "Non-Fatal" to appear anywhere on the page
+  // Wait for dashboard to render
   try {
     await page.waitForFunction(
       () => document.body.innerText.includes('Non-Fatal'),
@@ -252,56 +254,74 @@ async function fetchMilwaukee() {
   } catch(e) {
     console.log('Milwaukee: Non-Fatal not found after 30s, proceeding anyway...');
   }
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(5000);
 
-  // Get date from top-level page text
+  // Get as-of date
   const fullText = await page.evaluate(() => document.body.innerText);
   const dateMatch = fullText.match(/Data Current Through[:\s]+(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
   let asof = null;
   if (dateMatch) {
     asof = `${dateMatch[3]}-${dateMatch[1].padStart(2,'0')}-${dateMatch[2].padStart(2,'0')}`;
   }
+  console.log('Milwaukee asof:', asof);
 
-  // Table row data lives inside Tableau iframes - search all frames
-  let ytd = null, prior = null;
-  const allFrames = page.frames();
-  console.log('Milwaukee: frame count:', allFrames.length);
-
-  for (const frame of allFrames) {
-    try {
-      const frameText = await frame.evaluate(() => document.body?.innerText || '');
-      if (!frameText.includes('Non-Fatal') || frameText.length < 200) continue;
-      console.log('Milwaukee: checking frame, length:', frameText.length, 'sample:', frameText.substring(0,100));
-
-      const lines = frameText.split('\n').map(l => l.trim()).filter(Boolean);
-      for (let i = 0; i < lines.length; i++) {
-        if ((lines[i] === 'Non-Fatal' && lines[i+1] === 'Shooting') ||
-            lines[i].match(/^Non-Fatal\s+Shooting$/i)) {
-          const startIdx = lines[i] === 'Non-Fatal' ? i + 2 : i + 1;
-          const nums = [];
-          for (let j = startIdx; j < Math.min(startIdx + 20, lines.length) && nums.length < 9; j++) {
-            if (/^-?[\d,]+$/.test(lines[j])) nums.push(parseInt(lines[j].replace(/,/g, '')));
-            else if (/^-?\d+\.?\d*%$/.test(lines[j])) continue;
-            else if (lines[j].match(/^(Carjacking|Homicide|Robbery|Assault|Rape)/i)) break;
-          }
-          console.log('Milwaukee nums from frame:', nums);
-          if (nums.length >= 3) {
-            ytd   = nums[nums.length - 1];
-            prior = nums[nums.length - 2];
-          }
-          break;
-        }
-      }
-      if (ytd !== null) break;
-    } catch(e) { /* cross-origin frame, skip */ }
-  }
-
+  // Screenshot the page and send to Claude vision API
+  const screenshotBuf = await page.screenshot({ fullPage: false });
   await browser.close();
+  console.log('Milwaukee: screenshot taken, size:', screenshotBuf.length, 'bytes');
 
-  if (ytd === null) throw new Error('Could not find Non-Fatal Shooting YTD values in any frame.\nTop-level text snippet: ' + fullText.substring(0, 300));
+  const base64Image = screenshotBuf.toString('base64');
 
-  return { ytd, prior, asof };
+  const claudeData = await new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 256,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64Image } },
+          { type: 'text', text: 'This is a Milwaukee Police Department crime dashboard. Find the row labeled "Non-Fatal Shooting" in the table. It has columns for YTD 2024, YTD 2025, and YTD 2026. What are those three YTD numbers? Reply with ONLY: YTD2024=N YTD2025=N YTD2026=N' }
+        ]
+      }]
+    });
+    const req = require('https').request({
+      hostname: 'api.anthropic.com',
+      path: '/v1/messages',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'Content-Length': Buffer.byteLength(body)
+      }
+    }, (res) => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
+        catch(e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+
+  const responseText = claudeData.content?.[0]?.text || '';
+  console.log('Milwaukee vision response:', responseText);
+
+  const m2025 = responseText.match(/YTD2025=(\d+)/);
+  const m2026 = responseText.match(/YTD2026=(\d+)/);
+
+  if (!m2026) throw new Error('Could not parse Milwaukee YTD from vision API. Response: ' + responseText);
+
+  return {
+    ytd:   parseInt(m2026[1]),
+    prior: m2025 ? parseInt(m2025[1]) : null,
+    asof
+  };
 }
+
 
 // ─── Memphis (Power BI) ───────────────────────────────────────────────────────
 
@@ -350,7 +370,7 @@ async function fetchMemphis() {
   // Click Non-Fatal Shooting button
   console.log('Memphis: clicking Non-Fatal Shooting...');
   await page.locator('text=Non-Fatal').first().click();
-  await page.waitForTimeout(4000);
+  await page.waitForTimeout(6000); // extra wait for chart to render
 
   // Read chart - shows "2026: 69" and "2025: 92 (-25%)"
   const chartText = await page.evaluate(() => document.body.innerText);
