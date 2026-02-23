@@ -646,17 +646,16 @@ async function fetchOmaha() {
       if (/^\d+$/.test(t)) nums.push(parseInt(t));
     }
     console.log(`Omaha row starting at ${startIdx}: nums=`, nums.slice(0, 60));
-    // The PDF layout: Jan NFS_I NFS_V HOM_I HOM_V, Feb ..., ..., Dec ..., YTD NFS_I NFS_V HOM_I HOM_V
-    // Then trailing zeros for months not yet in the year (blanks render as 0)
-    // So we need to skip trailing zeros and take the 4 values before them
     if (nums.length >= 4) {
-      // Find last non-zero index
-      let lastNonZero = nums.length - 1;
-      while (lastNonZero >= 0 && nums[lastNonZero] === 0) lastNonZero--;
-      // YTD is the 4 values ending at lastNonZero: NFS_I, NFS_V, HOM_I, HOM_V
-      const ytdEnd = lastNonZero;
-      if (ytdEnd >= 3) {
-        return { nfsV: nums[ytdEnd - 2], homV: nums[ytdEnd] };
+      // Strip trailing zeros (unfilled months render as 0)
+      const nonZero = [];
+      for (let i = 0; i < nums.length; i++) nonZero.push(nums[i]);
+      while (nonZero.length && nonZero[nonZero.length - 1] === 0) nonZero.pop();
+      console.log(`  nonZero tail (last 10):`, nonZero.slice(-10));
+      // Last 4 non-zero values are YTD: NFS_I, NFS_V, HOM_I, HOM_V
+      if (nonZero.length >= 4) {
+        const n = nonZero.length;
+        return { nfsV: nonZero[n - 3], homV: nonZero[n - 1] };
       }
     }
     return null;
