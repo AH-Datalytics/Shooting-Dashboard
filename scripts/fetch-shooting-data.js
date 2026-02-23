@@ -645,6 +645,7 @@ async function fetchOmaha() {
       if (/^\d{4}$/.test(t) && parseInt(t) >= 2020) break; // next year row
       if (/^\d+$/.test(t)) nums.push(parseInt(t));
     }
+    console.log(`Omaha row starting at ${startIdx}: nums=`, nums.slice(0, 60));
     // YTD is the last 4 numbers: NFS_I, NFS_V, HOM_I, HOM_V
     if (nums.length >= 4) {
       const last4 = nums.slice(-4);
