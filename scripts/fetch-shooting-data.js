@@ -576,6 +576,88 @@ async function fetchPittsburgh() {
 }
 
 
+// ─── Miami-Dade (Power BI) ────────────────────────────────────────────────────
+
+async function fetchMiamiDade() {
+  const { chromium } = require('playwright');
+  const browser = await chromium.launch({ headless: true });
+  const page    = await browser.newPage();
+  await page.setViewportSize({ width: 1536, height: 768 });
+  page.setDefaultTimeout(30000);
+
+  // The crime stats page redirects to a Power BI embed
+  const url = 'https://www.miamidade.gov/global/police/crime-stats.page';
+  console.log('MiamiDade: loading Power BI dashboard...');
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(20000);
+
+  const page1Text = await page.evaluate(() => document.body.innerText);
+  console.log('MiamiDade page1 sample:', page1Text.substring(0, 600));
+
+  // Extract as-of date from "Last update date: MM/DD/YYYY"
+  const dateMatch = page1Text.match(/Last update date[:\s]+(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
+  let asof = null;
+  if (dateMatch) {
+    asof = `${dateMatch[3]}-${dateMatch[1].padStart(2,'0')}-${dateMatch[2].padStart(2,'0')}`;
+  }
+  console.log('MiamiDade asof:', asof);
+
+  // Navigate to page 3 - try clicking the third page tab or next button twice
+  console.log('MiamiDade: navigating to page 3...');
+  for (let i = 0; i < 2; i++) {
+    try {
+      await page.locator('.pbi-glyph-chevronrightmedium').first().click({ force: true, timeout: 5000 });
+      await page.waitForTimeout(5000);
+    } catch(e) { console.log('MiamiDade: nav click failed:', e.message); }
+  }
+
+  const page3Text = await page.evaluate(() => document.body.innerText);
+  console.log('MiamiDade page3 sample:', page3Text.substring(0, 800));
+  await browser.close();
+
+  const yr = new Date().getFullYear();
+
+  // The YTD table has rows like: SHOOTINGS  15  -40%  25  -11%  28  ...
+  // Text layout: "SHOOTINGS\n15\n-40%\n25\n-11%\n..."
+  // We want: 2026 count (col1) and 2025 count (col2)
+  // Try to find SHOOTINGS row in the YTD section
+  let ytd = null, prior = null;
+
+  // Strategy 1: find SHOOTINGS followed by numbers
+  const shootMatch = page3Text.match(/SHOOTINGS[\s\S]{0,200}/i);
+  if (shootMatch) {
+    const nums = [...shootMatch[0].matchAll(/(\d+)\s+[-\d.]+%/g)];
+    console.log('MiamiDade shootings nums:', nums.map(m => m[1]).join(', '));
+    if (nums.length >= 1) ytd   = parseInt(nums[0][1]);
+    if (nums.length >= 2) prior = parseInt(nums[1][1]);
+  }
+
+  // Strategy 2: look for the header pattern "2026 ... 2025 ..." then find SHOOTINGS row
+  if (ytd === null) {
+    const lines = page3Text.split('\n').map(l => l.trim()).filter(Boolean);
+    for (let i = 0; i < lines.length; i++) {
+      if (/^SHOOTINGS$/i.test(lines[i])) {
+        // Next numeric lines are the values
+        const vals = [];
+        for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
+          if (/^\d+$/.test(lines[j])) vals.push(parseInt(lines[j]));
+          if (vals.length === 2) break;
+        }
+        console.log('MiamiDade line-scan shootings:', vals);
+        if (vals.length >= 1) ytd   = vals[0];
+        if (vals.length >= 2) prior = vals[1];
+        break;
+      }
+    }
+  }
+
+  console.log(`MiamiDade parsed: ytd=${ytd} prior=${prior}`);
+  if (ytd === null) throw new Error('Could not parse MiamiDade shootings from page text');
+
+  return { ytd, prior, asof };
+}
+
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 // ─── Omaha ─────────────────────────────────────────────────────────────────────
@@ -737,6 +819,16 @@ async function main() {
   // Omaha — manually updated, preserve existing value from manual-auto.json
   results.omaha = existing.omaha || { ok: false, error: 'No manual data yet' };
   console.log('Omaha (manual):', results.omaha);
+
+  // MiamiDade
+  try {
+    console.log('\n--- Fetching MiamiDade ---');
+    results.miamidade = { ...(await fetchMiamiDade()), fetchedAt, ok: true };
+    console.log('MiamiDade:', results.miamidade);
+  } catch (e) {
+    console.error('MiamiDade error:', e.message);
+    results.miamidade = { ok: false, error: e.message, fetchedAt };
+  }
 
   // Pittsburgh (90s hard timeout to prevent hanging)
   try {
