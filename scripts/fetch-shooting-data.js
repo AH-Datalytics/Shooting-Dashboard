@@ -829,6 +829,15 @@ async function fetchMiamiDade() {
   console.log('MiamiDade page3 sample:', page3Text.substring(0, 1000));
   await browser.close();
 
+  // Try to get asof from page3 if page1 didn't have it
+  if (!asof) {
+    const dateMatch3 = page3Text.match(/Last update dat[ae][:\s]+(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
+    if (dateMatch3) {
+      asof = `${dateMatch3[3]}-${dateMatch3[1].padStart(2,'0')}-${dateMatch3[2].padStart(2,'0')}`;
+      console.log('MiamiDade asof from page3:', asof);
+    }
+  }
+
   const yr = new Date().getFullYear();
   let ytd = null, prior = null;
 
@@ -1021,175 +1030,126 @@ main().catch(e => { console.error(e); process.exit(1); });
 
 
 // ─── Portland (Tableau - PPB Shooting Incident Statistics) ───────────────────
-// Tableau Public embeds the viz in an iframe. We navigate directly to the
-// viz embed URL, then download the raw incident CSV from the toolbar.
+// The YTD chart numbers are rendered as SVG — not accessible via innerText.
+// Strategy: load the viz, clear the date filter so YTD shows all months,
+// deselect "No Injury" from the shooting type filter, then take a screenshot
+// of the YTD Comparison bar chart and send to vision API.
 
 async function fetchPortland() {
   const { chromium } = require('playwright');
   const browser = await chromium.launch({ headless: true });
   const page    = await browser.newPage();
-  await page.setViewportSize({ width: 1536, height: 1024 });
+  await page.setViewportSize({ width: 1536, height: 900 });
   page.setDefaultTimeout(30000);
 
   const yr = new Date().getFullYear();
 
-  async function forceClick(locator, timeout) {
-    await locator.click({ force: true, timeout: timeout || 10000 });
-  }
-
-  // Use the embed URL directly — bypasses the gallery wrapper page
   const embedUrl = 'https://public.tableau.com/views/PortlandShootingIncidentStatistics/ShootingIncidentStatistics?:showVizHome=no&:embed=true&:toolbar=yes';
   console.log('Portland: loading viz embed...');
   await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(12000);
 
-  // Log full page text — the YTD comparison table is rendered directly in the viz
-  // Get asof from page before clearing filter
-  var bodyText0 = await page.evaluate(function() { return document.body.innerText; });
-  var asof = null;
-  var updatedMatch = bodyText0.match(/Updated:\s+(\d+)\/(\d+)\/(\d+)/);
+  // Get asof from "Updated: M/D/YYYY" in page text
+  const bodyText0 = await page.evaluate(function() { return document.body.innerText; });
+  let asof = null;
+  const updatedMatch = bodyText0.match(/Updated:\s+(\d+)\/(\d+)\/(\d+)/);
   if (updatedMatch) asof = updatedMatch[3] + '-' + updatedMatch[1].padStart(2,'0') + '-' + updatedMatch[2].padStart(2,'0');
   console.log('Portland: asof from page:', asof);
 
-  // Clear the "Filter Timeline by Date" filter so YTD comparison shows ALL months (not just January)
-  // The filter pill shows "(Multiple values)" — click "All Values in Database" checkbox via innerText
+  // Step 1: Clear the date filter (currently set to just January)
+  // "All Values in Database" checkbox should already be visible in the filter panel
   console.log('Portland: clearing date filter...');
   try {
     await page.evaluate(function() {
       var all = Array.from(document.querySelectorAll('*'));
-      var el = all.find(function(e) {
-        return (e.innerText || e.textContent || '').trim() === 'All Values in Database';
-      });
-      if (el) el.click();
-      else throw new Error('All Values checkbox not found');
+      var el = all.find(function(e) { return (e.innerText || e.textContent || '').trim() === 'All Values in Database'; });
+      if (el) el.click(); else throw new Error('not found');
     });
     await page.waitForTimeout(4000);
     console.log('Portland: date filter cleared');
   } catch(e) {
-    console.log('Portland: could not clear filter:', e.message.split('\n')[0]);
-    // Try clicking the filter pill to open it first
+    console.log('Portland: date filter clear failed, trying via pill:', e.message.split('\n')[0]);
     try {
       await page.evaluate(function() {
         var all = Array.from(document.querySelectorAll('*'));
-        var el = all.find(function(e) {
-          return (e.innerText || e.textContent || '').trim() === 'Filter Timeline by Date';
-        });
+        var el = all.find(function(e) { return (e.innerText || e.textContent || '').trim() === 'Filter Timeline by Date'; });
         if (el) el.click();
       });
       await page.waitForTimeout(2000);
       await page.evaluate(function() {
         var all = Array.from(document.querySelectorAll('*'));
-        var el = all.find(function(e) {
-          return (e.innerText || e.textContent || '').trim() === 'All Values in Database';
-        });
-        if (el) el.click();
+        var el = all.find(function(e) { return (e.innerText || e.textContent || '').trim() === 'All Values in Database'; });
+        if (el) el.click(); else throw new Error('not found after pill open');
       });
       await page.waitForTimeout(4000);
-      console.log('Portland: date filter cleared via pill open');
+      console.log('Portland: date filter cleared via pill');
     } catch(e2) {
-      console.log('Portland: filter clear fallback also failed:', e2.message.split('\n')[0]);
+      console.log('Portland: date filter fallback failed:', e2.message.split('\n')[0]);
     }
   }
 
-  // Set Shooting Type filter: deselect "No Injury" so chart shows Homicide + Non-Fatal Injury only
+  // Step 2: Deselect "No Injury" from shooting type filter
+  // Filter label is "Filter All Charts by Shooting Type" — click it to open, then deselect No Injury
   console.log('Portland: opening Shooting Type filter...');
   try {
-    // Click the shooting type filter label/dropdown to open it
     await page.evaluate(function() {
       var all = Array.from(document.querySelectorAll('*'));
-      var el = all.find(function(e) {
-        return (e.innerText || e.textContent || '').trim() === 'Filter All Charts by Shooting Type';
-      });
-      if (el) el.click();
-      else throw new Error('Shooting Type filter label not found');
+      var el = all.find(function(e) { return (e.innerText || e.textContent || '').trim() === 'Filter All Charts by Shooting Type'; });
+      if (el) el.click(); else throw new Error('label not found');
     });
     await page.waitForTimeout(2000);
-
-    // Deselect "No Injury"
     await page.evaluate(function() {
       var all = Array.from(document.querySelectorAll('*'));
-      var el = all.find(function(e) {
-        return (e.innerText || e.textContent || '').trim() === 'No Injury';
-      });
-      if (el) el.click();
-      else throw new Error('No Injury option not found');
+      var el = all.find(function(e) { return (e.innerText || e.textContent || '').trim() === 'No Injury'; });
+      if (el) el.click(); else throw new Error('No Injury not found');
     });
     await page.waitForTimeout(4000);
     console.log('Portland: No Injury deselected');
   } catch(e) {
     console.log('Portland: shooting type filter failed:', e.message.split('\n')[0]);
-    // Log visible filter options for diagnosis
-    const filterOpts = await page.evaluate(function() {
+    // Log what's visible for diagnosis
+    const opts = await page.evaluate(function() {
       return Array.from(document.querySelectorAll('*'))
         .map(function(e) { return (e.innerText || e.textContent || '').trim(); })
-        .filter(function(t) { return t === 'No Injury' || t === 'Homicide' || t === 'Non-Fatal Injury'; })
+        .filter(function(t) { return t === 'No Injury' || t === 'Homicide' || t === 'Non-Fatal Injury' || t === 'All'; })
         .slice(0, 10);
     });
-    console.log('Portland: visible shooting type options:', JSON.stringify(filterOpts));
+    console.log('Portland: visible filter options:', JSON.stringify(opts));
   }
 
-  const bodyText = await page.evaluate(function() { return document.body.innerText; });
+  // Step 3: Screenshot the YTD Comparison bar chart and send to vision API
+  const screenshotBuf = await page.screenshot({ fullPage: false });
   await browser.close();
+  console.log('Portland: screenshot taken, size:', screenshotBuf.length, 'bytes');
 
-  // Log the YTD comparison block specifically
-  var allLines = bodyText.split('\n').map(function(l) { return l.trim(); }).filter(Boolean);
-  var ytdBlockIdx = allLines.findIndex(function(l) { return l.startsWith('Year-to-Date Comparis'); });
-  console.log('Portland: YTD block at line', ytdBlockIdx, '| total lines:', allLines.length);
-  if (ytdBlockIdx >= 0) {
-    console.log('Portland: YTD block (40 lines):', JSON.stringify(allLines.slice(ytdBlockIdx, ytdBlockIdx + 40)));
-  }
+  const Anthropic = require('@anthropic-ai/sdk');
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const b64 = screenshotBuf.toString('base64');
 
-  // Parse: after "Year-to-Date Comparison: ..." we get year labels then count values in pairs
-  // Structure (each on its own line):
-  //   Year-to-Date Comparison: [month or "All"]
-  //   2019
-  //   2020
-  //   ...
-  //   2026
-  //   [count for 2019]
-  //   [count for 2020]
-  //   ...
-  //   [count for 2026]
-  var ytd = null, prior = null;
+  const visionResp = await client.messages.create({
+    model: 'claude-opus-4-5',
+    max_tokens: 256,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: b64 } },
+        { type: 'text', text: 'This is a Tableau dashboard showing Portland shooting incident statistics. Find the "Year-to-Date Comparison" bar chart. It shows yearly totals for shooting incidents (Homicide + Non-Fatal Injury, excluding No Injury). Extract the YTD total for ' + yr + ' and for ' + (yr-1) + '. Reply only in this exact format: YTD' + yr + '=N YTD' + (yr-1) + '=N' }
+      ]
+    }]
+  });
 
-  if (ytdBlockIdx >= 0) {
-    // Collect contiguous 4-digit year lines immediately after the header
-    var years = [];
-    var i = ytdBlockIdx + 1;
-    while (i < allLines.length && /^\d{4}$/.test(allLines[i])) {
-      years.push(allLines[i]);
-      i++;
-    }
-    console.log('Portland: years found:', years);
+  const visionText = visionResp.content[0].text.trim();
+  console.log('Portland vision response:', visionText);
 
-    // Now collect the same number of numeric count values
-    var counts = [];
-    while (i < allLines.length && counts.length < years.length) {
-      var n = parseInt(allLines[i].replace(/,/g, ''), 10);
-      if (!isNaN(n) && n >= 0) counts.push(n);
-      else if (allLines[i] !== '' && !/^\d{4}$/.test(allLines[i])) {
-        // Non-numeric non-year line means we've left the data block
-        break;
-      }
-      i++;
-    }
-    console.log('Portland: counts found:', counts);
+  const ytdMatch   = visionText.match(new RegExp('YTD' + yr + '=(\\d+)'));
+  const priorMatch = visionText.match(new RegExp('YTD' + (yr-1) + '=(\\d+)'));
 
-    if (years.length === counts.length && years.length > 0) {
-      var yrIdx    = years.indexOf(String(yr));
-      var priorIdx = years.indexOf(String(yr - 1));
-      if (yrIdx >= 0)    ytd   = counts[yrIdx];
-      if (priorIdx >= 0) prior = counts[priorIdx];
-    }
-  }
+  if (!ytdMatch || !priorMatch) throw new Error('Portland: vision parse failed: ' + visionText);
 
+  const ytd   = parseInt(ytdMatch[1]);
+  const prior = parseInt(priorMatch[1]);
   console.log('Portland final: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
 
-  if (ytd === null || prior === null) {
-    console.log('Portland: full page text for diagnosis:\n' + bodyText.substring(0, 3000));
-    throw new Error('Portland: could not parse YTD totals from page text');
-  }
-  if (ytd === 0 && prior === 0) throw new Error('Portland: parsed all zeros');
-
-  return { ytd: ytd, prior: prior, asof: asof };
+  if (ytd === 0 && prior === 0) throw new Error('Portland: vision returned all zeros');
+  return { ytd, prior, asof };
 }
