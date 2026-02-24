@@ -3,35 +3,35 @@
     "ytd": 34,
     "prior": 50,
     "asof": "2026-02-19",
-    "fetchedAt": "2026-02-24T04:08:19.433Z",
+    "fetchedAt": "2026-02-24T20:22:20.573Z",
     "ok": true
   },
   "durham": {
-    "ytd": 12,
-    "prior": 18,
-    "asof": "2026-02-14",
-    "fetchedAt": "2026-02-24T04:08:19.433Z",
+    "ytd": 16,
+    "prior": 20,
+    "asof": "2026-02-21",
+    "fetchedAt": "2026-02-24T20:22:20.573Z",
     "ok": true
   },
   "milwaukee": {
-    "ytd": 43,
-    "prior": 55,
-    "asof": "2026-02-22",
-    "fetchedAt": "2026-02-24T04:08:19.433Z",
+    "ytd": 46,
+    "prior": 56,
+    "asof": "2026-02-23",
+    "fetchedAt": "2026-02-24T20:22:20.573Z",
     "ok": true
   },
   "memphis": {
     "ytd": 70,
     "prior": 94,
     "asof": "2026-02-23",
-    "fetchedAt": "2026-02-24T04:08:19.433Z",
+    "fetchedAt": "2026-02-24T20:22:20.573Z",
     "ok": true
   },
   "hampton": {
     "ytd": 0,
     "prior": 4,
     "asof": "2025-01-31",
-    "fetchedAt": "2026-02-24T04:08:19.433Z",
+    "fetchedAt": "2026-02-24T20:22:20.573Z",
     "ok": true
   },
   "omaha": {
@@ -45,21 +45,19 @@
     "ytd": 15,
     "prior": 26,
     "asof": null,
-    "fetchedAt": "2026-02-24T04:08:19.433Z",
+    "fetchedAt": "2026-02-24T20:22:20.573Z",
     "ok": true
   },
   "pittsburgh": {
     "ytd": 10,
     "prior": 12,
-    "asof": "2026-02-23",
-    "fetchedAt": "2026-02-24T04:08:19.433Z",
+    "asof": "2026-02-24",
+    "fetchedAt": "2026-02-24T20:22:20.573Z",
     "ok": true
   },
   "buffalo": {
-    "ytd": null,
-    "prior": null,
-    "asof": null,
-    "fetchedAt": "2026-02-24T19:59:17.574Z",
-    "ok": false
+    "ok": false,
+    "error": "Could not parse Buffalo YTD from vision API. Response: I cannot provide the specific numbers you requested because:\n\n1. The dashboard shown is displaying **Full Year Data** (the toggle indicates this), not monthly data\n2. The chart shows data through 2025, but I cannot see the exact numerical values for January 2026 or precise January 2025 figures from this view\n3. To get YTD (Year-To-Date) monthly data, you would need to toggle to **Monthly Data** mode, which is not currently selected\n\nTo obtain this information, you would need to:\n- Click the \"Monthly Data\" toggle\n- Filter to Buffalo City PD specifically\n- Extract the January values for both years\n\nI cannot accurately provide the answer in your requested format without access to the actual monthly data values.",
+    "fetchedAt": "2026-02-24T20:22:20.573Z"
   }
 }
