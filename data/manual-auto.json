@@ -1,39 +1,4 @@
 {
-  "detroit": {
-    "ytd": 34,
-    "prior": 50,
-    "asof": "2026-02-19",
-    "fetchedAt": "2026-02-24T21:48:24.142Z",
-    "ok": true
-  },
-  "durham": {
-    "ytd": 16,
-    "prior": 20,
-    "asof": "2026-02-21",
-    "fetchedAt": "2026-02-24T21:48:24.142Z",
-    "ok": true
-  },
-  "milwaukee": {
-    "ytd": 46,
-    "prior": 56,
-    "asof": "2026-02-23",
-    "fetchedAt": "2026-02-24T21:48:24.142Z",
-    "ok": true
-  },
-  "memphis": {
-    "ytd": 70,
-    "prior": 94,
-    "asof": "2026-02-23",
-    "fetchedAt": "2026-02-24T21:48:24.142Z",
-    "ok": true
-  },
-  "hampton": {
-    "ytd": 0,
-    "prior": 4,
-    "asof": "2026-01-31",
-    "fetchedAt": "2026-02-24T21:48:24.142Z",
-    "ok": true
-  },
   "omaha": {
     "ytd": 2,
     "prior": 8,
@@ -41,30 +6,65 @@
     "fetchedAt": "2026-02-23T02:03:22.801Z",
     "ok": true
   },
+  "detroit": {
+    "ytd": 34,
+    "prior": 50,
+    "asof": "2026-02-19",
+    "fetchedAt": "2026-02-24T21:59:25.109Z",
+    "ok": true
+  },
+  "durham": {
+    "ytd": 16,
+    "prior": 20,
+    "asof": "2026-02-21",
+    "fetchedAt": "2026-02-24T21:59:25.109Z",
+    "ok": true
+  },
+  "milwaukee": {
+    "ytd": 46,
+    "prior": 56,
+    "asof": "2026-02-23",
+    "fetchedAt": "2026-02-24T21:59:25.109Z",
+    "ok": true
+  },
+  "memphis": {
+    "ytd": 70,
+    "prior": 94,
+    "asof": "2026-02-23",
+    "fetchedAt": "2026-02-24T21:59:25.109Z",
+    "ok": true
+  },
+  "hampton": {
+    "ytd": 0,
+    "prior": 4,
+    "asof": "2026-01-31",
+    "fetchedAt": "2026-02-24T21:59:25.109Z",
+    "ok": true
+  },
   "miamidade": {
     "ytd": 15,
     "prior": 26,
     "asof": null,
-    "fetchedAt": "2026-02-24T21:48:24.142Z",
+    "fetchedAt": "2026-02-24T21:59:25.109Z",
     "ok": true
   },
   "pittsburgh": {
     "ytd": 10,
     "prior": 12,
     "asof": "2026-02-24",
-    "fetchedAt": "2026-02-24T21:48:24.142Z",
+    "fetchedAt": "2026-02-24T21:59:25.109Z",
     "ok": true
   },
   "portland": {
     "ok": false,
-    "error": "Portland: could not download CSV",
-    "fetchedAt": "2026-02-24T21:48:24.142Z"
+    "error": "Portland: could not download CSV — check tab/link selectors in logs",
+    "fetchedAt": "2026-02-24T21:59:25.109Z"
   },
   "buffalo": {
     "ytd": 39,
     "prior": 48,
     "asof": "2026-01-31",
-    "fetchedAt": "2026-02-24T21:48:24.142Z",
+    "fetchedAt": "2026-02-24T21:59:25.109Z",
     "ok": true
   }
 }
