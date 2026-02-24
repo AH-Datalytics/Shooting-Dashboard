@@ -3,35 +3,35 @@
     "ytd": 34,
     "prior": 50,
     "asof": "2026-02-19",
-    "fetchedAt": "2026-02-24T20:51:48.032Z",
+    "fetchedAt": "2026-02-24T21:03:54.574Z",
     "ok": true
   },
   "durham": {
     "ytd": 16,
     "prior": 20,
     "asof": "2026-02-21",
-    "fetchedAt": "2026-02-24T20:51:48.032Z",
+    "fetchedAt": "2026-02-24T21:03:54.574Z",
     "ok": true
   },
   "milwaukee": {
     "ytd": 46,
     "prior": 56,
     "asof": "2026-02-23",
-    "fetchedAt": "2026-02-24T20:51:48.032Z",
+    "fetchedAt": "2026-02-24T21:03:54.574Z",
     "ok": true
   },
   "memphis": {
     "ytd": 70,
     "prior": 94,
     "asof": "2026-02-23",
-    "fetchedAt": "2026-02-24T20:51:48.032Z",
+    "fetchedAt": "2026-02-24T21:03:54.574Z",
     "ok": true
   },
   "hampton": {
     "ytd": 0,
     "prior": 4,
-    "asof": "2026-01-31",
-    "fetchedAt": "2026-02-24T20:51:48.032Z",
+    "asof": "2025-01-31",
+    "fetchedAt": "2026-02-24T21:03:54.574Z",
     "ok": true
   },
   "omaha": {
@@ -45,19 +45,21 @@
     "ytd": 15,
     "prior": 26,
     "asof": null,
-    "fetchedAt": "2026-02-24T20:51:48.032Z",
+    "fetchedAt": "2026-02-24T21:03:54.574Z",
     "ok": true
   },
   "pittsburgh": {
     "ytd": 10,
     "prior": 12,
     "asof": "2026-02-24",
-    "fetchedAt": "2026-02-24T20:51:48.032Z",
+    "fetchedAt": "2026-02-24T21:03:54.574Z",
     "ok": true
   },
   "buffalo": {
-    "ok": false,
-    "error": "Buffalo: could not find Jan values in CSV. Headers: ��M\u0000o\u0000n\u0000t\u0000h\u0000 \u0000o\u0000f\u0000 \u0000Y\u0000M\u0000 \u0000(\u0000a\u0000s\u0000c\u0000e\u0000n\u0000d\u0000i\u0000n\u0000g\u0000)\u0000\t\u0000S\u0000h\u0000o\u0000o\u0000t\u0000i\u0000n\u0000g\u0000 \u0000C\u0000a\u0000t\u0000e\u0000g\u0000o\u0000r\u0000y\u0000\t\u0000C\u0000o\u0000u\u0000n\u0000t\u0000\r\u0000",
-    "fetchedAt": "2026-02-24T20:51:48.032Z"
+    "ytd": 39,
+    "prior": 48,
+    "asof": "2026-01-31",
+    "fetchedAt": "2026-02-24T21:03:54.574Z",
+    "ok": true
   }
 }
