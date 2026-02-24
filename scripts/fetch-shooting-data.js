@@ -1088,97 +1088,61 @@ async function fetchPortland() {
     }
   }
 
-  // Step 2: Deselect "No Injury" from shooting type filter
-  // Strategy: find the "All" select/dropdown element that's a sibling/child near "Shooting Type" text,
-  // click it to open, then find and deselect "No Injury"
-  console.log('Portland: opening Shooting Type filter...');
-  let filterOpened = false;
+  // Step 2: Set Tableau Parameter Control to "Homicide" or "Non-Fatal Injury" to exclude No Injury
+  // The widget is a .ParameterControl containing a <select> element - it's a single-value parameter
+  // We need to read available options and pick one that excludes No Injury, OR use select to set value
+  console.log('Portland: setting Shooting Type parameter...');
 
-  // Try 1: find element with exact text "All" that is closest to "Filter All Charts by Shooting Type"
-  try {
-    await page.evaluate(function() {
-      var allEls = Array.from(document.querySelectorAll('*'));
-      // Find the label element
-      var label = allEls.find(function(e) {
-        return (e.innerText || e.textContent || '').trim() === 'Filter All Charts by Shooting Type';
-      });
-      if (!label) throw new Error('label not found');
-      // Walk up to find a common ancestor that also contains "All", then click "All"
-      var ancestor = label;
-      for (var i = 0; i < 8; i++) {
-        ancestor = ancestor.parentElement;
-        if (!ancestor) break;
-        var allChild = Array.from(ancestor.querySelectorAll('*')).find(function(e) {
-          return (e.innerText || e.textContent || '').trim() === 'All' && e !== label;
-        });
-        if (allChild) { allChild.click(); return; }
-      }
-      throw new Error('All dropdown not found near label');
-    });
-    await page.waitForTimeout(2000);
-    // Take diagnostic screenshot of open filter
-    const diagBuf = await page.screenshot({ fullPage: false });
-    console.log('Portland: filter open diagnostic screenshot, size:', diagBuf.length);
-    // Check what's now visible
-    const afterOpen = await page.evaluate(function() {
-      return Array.from(document.querySelectorAll('*'))
-        .map(function(e) { return (e.innerText || e.textContent || '').trim(); })
-        .filter(function(t) { return t === 'No Injury' || t === 'Homicide' || t === 'Non-Fatal Injury'; })
-        .slice(0, 10);
-    });
-    console.log('Portland: filter options after open:', JSON.stringify(afterOpen));
-    if (afterOpen.length > 0) {
-      await page.evaluate(function() {
-        var allEls = Array.from(document.querySelectorAll('*'));
-        var el = allEls.find(function(e) { return (e.innerText || e.textContent || '').trim() === 'No Injury'; });
-        if (el) el.click(); else throw new Error('No Injury not found after open');
-      });
-      await page.waitForTimeout(4000);
-      filterOpened = true;
-      console.log('Portland: No Injury deselected via Try 1');
+  // First, read what options the <select> inside .ParameterControl has
+  const paramInfo = await page.evaluate(function() {
+    var pc = document.querySelector('.ParameterControl select, .ParameterControlBox select, .tab-parameter select');
+    if (!pc) {
+      // Try finding any select near the shooting type label
+      var allSelects = Array.from(document.querySelectorAll('select'));
+      return { found: false, selectCount: allSelects.length, options: allSelects.map(function(s) {
+        return Array.from(s.options).map(function(o) { return o.value + ':' + o.text; });
+      })};
     }
-  } catch(e) {
-    console.log('Portland: Try 1 failed:', e.message.split('\n')[0]);
-  }
+    return {
+      found: true,
+      currentValue: pc.value,
+      options: Array.from(pc.options).map(function(o) { return o.value + ':' + o.text; })
+    };
+  });
+  console.log('Portland: parameter select info:', JSON.stringify(paramInfo));
 
-  // Try 2: use Playwright locator to find select element near shooting type text
-  if (!filterOpened) {
+  // If we found the select, try setting it to "All" which on this viz means all injury types
+  // then see if there's a way to filter - or log options for next iteration
+  let paramSet = false;
+  if (paramInfo.found) {
     try {
-      // Look for a <select> or role=listbox near the filter label
-      const filterArea = page.locator('text=Filter All Charts by Shooting Type');
-      const parent = filterArea.locator('..');
-      await parent.locator('select, [role=listbox], [role=combobox]').first().click({ timeout: 3000 });
-      await page.waitForTimeout(2000);
-      const afterOpen2 = await page.evaluate(function() {
-        return Array.from(document.querySelectorAll('*'))
-          .map(function(e) { return (e.innerText || e.textContent || '').trim(); })
-          .filter(function(t) { return t === 'No Injury' || t === 'Homicide' || t === 'Non-Fatal Injury'; })
-          .slice(0, 10);
+      // Try selecting "Non-Fatal Injury" option if it exists, otherwise log all options
+      const nonFatalVal = await page.evaluate(function() {
+        var pc = document.querySelector('.ParameterControl select, .ParameterControlBox select, .tab-parameter select');
+        var opts = Array.from(pc.options);
+        // Find Non-Fatal Injury or Homicide option
+        var nfi = opts.find(function(o) { return o.text.includes('Non-Fatal') || o.text.includes('Homicide'); });
+        if (nfi) { pc.value = nfi.value; pc.dispatchEvent(new Event('change', {bubbles:true})); return nfi.text; }
+        return null;
       });
-      console.log('Portland: Try 2 filter options:', JSON.stringify(afterOpen2));
-      if (afterOpen2.length > 0) {
-        await page.locator('text=No Injury').first().click();
-        await page.waitForTimeout(4000);
-        filterOpened = true;
-        console.log('Portland: No Injury deselected via Try 2');
+      if (nonFatalVal) {
+        await page.waitForTimeout(3000);
+        paramSet = true;
+        console.log('Portland: parameter set to:', nonFatalVal);
       }
     } catch(e) {
-      console.log('Portland: Try 2 failed:', e.message.split('\n')[0]);
+      console.log('Portland: parameter set failed:', e.message.split('\n')[0]);
     }
   }
 
-  if (!filterOpened) {
-    console.log('Portland: WARNING - could not deselect No Injury, screenshot will include all shooting types');
-    // Log full DOM text snippet around shooting type for diagnosis
-    const diagText = await page.evaluate(function() {
-      var all = Array.from(document.querySelectorAll('*'));
-      var label = all.find(function(e) { return (e.innerText || e.textContent || '').trim() === 'Filter All Charts by Shooting Type'; });
-      if (!label) return 'label not found';
-      var ancestor = label;
-      for (var i = 0; i < 5; i++) { ancestor = ancestor.parentElement; if (!ancestor) break; }
-      return ancestor ? ancestor.innerHTML.substring(0, 500) : 'no ancestor';
+  if (!paramSet) {
+    console.log('Portland: WARNING - could not set shooting type parameter, screenshot will include all types');
+    // Log full ParameterControl HTML for diagnosis
+    const pcHTML = await page.evaluate(function() {
+      var pc = document.querySelector('.ParameterControl');
+      return pc ? pc.outerHTML.substring(0, 1000) : 'ParameterControl not found';
     });
-    console.log('Portland: Shooting Type filter DOM snippet:', diagText);
+    console.log('Portland: ParameterControl HTML:', pcHTML);
   }
 
   // Step 3: Screenshot the YTD Comparison bar chart and send to vision API
