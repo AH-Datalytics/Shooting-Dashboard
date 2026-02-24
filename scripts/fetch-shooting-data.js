@@ -1088,61 +1088,90 @@ async function fetchPortland() {
     }
   }
 
-  // Step 2: Set Tableau Parameter Control to "Homicide" or "Non-Fatal Injury" to exclude No Injury
-  // The widget is a .ParameterControl containing a <select> element - it's a single-value parameter
-  // We need to read available options and pick one that excludes No Injury, OR use select to set value
+  // Step 2: Set Tableau Parameter via JS API or by clicking the Dojo widget
+  // The .ParameterControl is a custom Dojo widget with no native <select>.
+  // Strategy A: Use Tableau's JS API (window.tableau or viz object)
+  // Strategy B: Click the widget title/value area to open dropdown, then click option
   console.log('Portland: setting Shooting Type parameter...');
 
-  // First, read what options the <select> inside .ParameterControl has
-  const paramInfo = await page.evaluate(function() {
-    var pc = document.querySelector('.ParameterControl select, .ParameterControlBox select, .tab-parameter select');
-    if (!pc) {
-      // Try finding any select near the shooting type label
-      var allSelects = Array.from(document.querySelectorAll('select'));
-      return { found: false, selectCount: allSelects.length, options: allSelects.map(function(s) {
-        return Array.from(s.options).map(function(o) { return o.value + ':' + o.text; });
-      })};
-    }
-    return {
-      found: true,
-      currentValue: pc.value,
-      options: Array.from(pc.options).map(function(o) { return o.value + ':' + o.text; })
-    };
-  });
-  console.log('Portland: parameter select info:', JSON.stringify(paramInfo));
-
-  // If we found the select, try setting it to "All" which on this viz means all injury types
-  // then see if there's a way to filter - or log options for next iteration
   let paramSet = false;
-  if (paramInfo.found) {
-    try {
-      // Try selecting "Non-Fatal Injury" option if it exists, otherwise log all options
-      const nonFatalVal = await page.evaluate(function() {
-        var pc = document.querySelector('.ParameterControl select, .ParameterControlBox select, .tab-parameter select');
-        var opts = Array.from(pc.options);
-        // Find Non-Fatal Injury or Homicide option
-        var nfi = opts.find(function(o) { return o.text.includes('Non-Fatal') || o.text.includes('Homicide'); });
-        if (nfi) { pc.value = nfi.value; pc.dispatchEvent(new Event('change', {bubbles:true})); return nfi.text; }
-        return null;
-      });
-      if (nonFatalVal) {
-        await page.waitForTimeout(3000);
-        paramSet = true;
-        console.log('Portland: parameter set to:', nonFatalVal);
+
+  // Strategy A: Tableau JS API - try to find viz object and call changeParameterValueAsync
+  try {
+    const apiResult = await page.evaluate(async function() {
+      // Tableau Public exposes viz via window.tableau or through the parent frame
+      // Try to find the viz via the Tableau JS API
+      if (window.tableau && window.tableau.VizManager) {
+        var vizzes = window.tableau.VizManager.getVizs();
+        if (vizzes && vizzes.length > 0) {
+          var viz = vizzes[0];
+          var wb = viz.getWorkbook();
+          var ps = wb.getParametersAsync ? await wb.getParametersAsync() : [];
+          var param = ps.find(function(p) { return p.getName().includes('Shooting'); });
+          if (param) {
+            var vals = param.getAllowableValues();
+            var target = vals.find(function(v) { return v.getFormattedValue && (v.getFormattedValue().includes('Non-Fatal') || v.getFormattedValue() === 'Homicide'); });
+            if (!target) target = vals[0]; // fallback
+            await param.changeValueAsync(target ? target.getValue() : null);
+            return { ok: true, paramName: param.getName(), valueset: target ? target.getFormattedValue() : 'none' };
+          }
+          return { ok: false, reason: 'param not found', params: ps.map(function(p) { return p.getName(); }) };
+        }
+        return { ok: false, reason: 'no vizzes' };
       }
+      // Alternative: try tableau_ported objects
+      var keys = Object.keys(window).filter(function(k) { return k.startsWith('tableau'); });
+      return { ok: false, reason: 'no tableau API', windowKeys: keys.slice(0, 10) };
+    });
+    console.log('Portland: JS API result:', JSON.stringify(apiResult));
+    if (apiResult.ok) {
+      await page.waitForTimeout(4000);
+      paramSet = true;
+    }
+  } catch(e) {
+    console.log('Portland: JS API failed:', e.message.split('\n')[0]);
+  }
+
+  // Strategy B: Click the ParameterControl value display to open its dropdown, then click option
+  if (!paramSet) {
+    try {
+      // The ParameterControl Dojo widget has a clickable value area - try clicking it
+      // and inspecting what appears in the DOM after the click
+      await page.evaluate(function() {
+        var pc = document.querySelector('.ParameterControl');
+        if (!pc) throw new Error('no ParameterControl');
+        // Click on the value display area (usually a div/span after the title)
+        var clickable = pc.querySelector('.ParameterControlBox > div:not(.Title), .tab-widget-content, [dojoattachpoint="domDropDown"], [dojoattachpoint="domInput"]');
+        if (clickable) { clickable.click(); return 'clicked: ' + clickable.className; }
+        // Fallback: click anywhere inside the control except the title
+        var title = pc.querySelector('.Title');
+        var allInner = Array.from(pc.querySelectorAll('*')).filter(function(e) { return !title || !title.contains(e); });
+        if (allInner.length > 0) { allInner[0].click(); return 'clicked inner: ' + allInner[0].tagName + '.' + allInner[0].className; }
+        throw new Error('nothing to click');
+      });
+      await page.waitForTimeout(1500);
+
+      // Log the full ParameterControl HTML now (may have expanded)
+      const pcAfterClick = await page.evaluate(function() {
+        var pc = document.querySelector('.ParameterControl');
+        return pc ? pc.outerHTML : 'not found';
+      });
+      console.log('Portland: ParameterControl after click (full):', pcAfterClick.substring(0, 2000));
+
+      // Also check if any new popup/dropdown appeared
+      const popupText = await page.evaluate(function() {
+        var popup = document.querySelector('[class*="dijitPopup"], [class*="dijitDropDown"], [class*="dijitMenu"], [class*="tableau_popup"]');
+        return popup ? popup.innerText || popup.textContent : 'no popup found';
+      });
+      console.log('Portland: popup after click:', popupText.substring(0, 500));
+
     } catch(e) {
-      console.log('Portland: parameter set failed:', e.message.split('\n')[0]);
+      console.log('Portland: Strategy B failed:', e.message.split('\n')[0]);
     }
   }
 
   if (!paramSet) {
-    console.log('Portland: WARNING - could not set shooting type parameter, screenshot will include all types');
-    // Log full ParameterControl HTML for diagnosis
-    const pcHTML = await page.evaluate(function() {
-      var pc = document.querySelector('.ParameterControl');
-      return pc ? pc.outerHTML.substring(0, 1000) : 'ParameterControl not found';
-    });
-    console.log('Portland: ParameterControl HTML:', pcHTML);
+    console.log('Portland: WARNING - parameter not set, will screenshot unfiltered view (all shooting types)');
   }
 
   // Step 3: Screenshot the YTD Comparison bar chart and send to vision API
