@@ -1088,90 +1088,91 @@ async function fetchPortland() {
     }
   }
 
-  // Step 2: Set Tableau Parameter via JS API or by clicking the Dojo widget
-  // The .ParameterControl is a custom Dojo widget with no native <select>.
-  // Strategy A: Use Tableau's JS API (window.tableau or viz object)
-  // Strategy B: Click the widget title/value area to open dropdown, then click option
+  // Step 2: Click the tabComboBox span to open the Dojo popup, then select the right option
+  // The widget is a <span role="button" class="tabComboBox ..."> inside .PCContent
+  // When clicked, Dojo renders a popup (likely appended to document.body) with the options
   console.log('Portland: setting Shooting Type parameter...');
 
   let paramSet = false;
 
-  // Strategy A: Tableau JS API - try to find viz object and call changeParameterValueAsync
   try {
-    const apiResult = await page.evaluate(async function() {
-      // Tableau Public exposes viz via window.tableau or through the parent frame
-      // Try to find the viz via the Tableau JS API
-      if (window.tableau && window.tableau.VizManager) {
-        var vizzes = window.tableau.VizManager.getVizs();
-        if (vizzes && vizzes.length > 0) {
-          var viz = vizzes[0];
-          var wb = viz.getWorkbook();
-          var ps = wb.getParametersAsync ? await wb.getParametersAsync() : [];
-          var param = ps.find(function(p) { return p.getName().includes('Shooting'); });
-          if (param) {
-            var vals = param.getAllowableValues();
-            var target = vals.find(function(v) { return v.getFormattedValue && (v.getFormattedValue().includes('Non-Fatal') || v.getFormattedValue() === 'Homicide'); });
-            if (!target) target = vals[0]; // fallback
-            await param.changeValueAsync(target ? target.getValue() : null);
-            return { ok: true, paramName: param.getName(), valueset: target ? target.getFormattedValue() : 'none' };
-          }
-          return { ok: false, reason: 'param not found', params: ps.map(function(p) { return p.getName(); }) };
-        }
-        return { ok: false, reason: 'no vizzes' };
-      }
-      // Alternative: try tableau_ported objects
-      var keys = Object.keys(window).filter(function(k) { return k.startsWith('tableau'); });
-      return { ok: false, reason: 'no tableau API', windowKeys: keys.slice(0, 10) };
+    // Click the tabComboBox span (the "All" dropdown button)
+    const comboClicked = await page.evaluate(function() {
+      var combo = document.querySelector('.tabComboBox');
+      if (!combo) return 'not found';
+      combo.click();
+      return 'clicked: ' + combo.getAttribute('aria-label');
     });
-    console.log('Portland: JS API result:', JSON.stringify(apiResult));
-    if (apiResult.ok) {
-      await page.waitForTimeout(4000);
-      paramSet = true;
+    console.log('Portland: combo click result:', comboClicked);
+    await page.waitForTimeout(2000);
+
+    // After click, scan entire document body for popup with shooting type options
+    const popupInfo = await page.evaluate(function() {
+      // Look for any element containing shooting type text
+      var allText = [];
+      document.querySelectorAll('*').forEach(function(el) {
+        var t = (el.innerText || el.textContent || '').trim();
+        if (t === 'No Injury' || t === 'Non-Fatal Injury' || t === 'Homicide') {
+          allText.push({ tag: el.tagName, cls: el.className, text: t, visible: el.offsetParent !== null });
+        }
+      });
+      // Also grab any new popup-like container
+      var popup = document.querySelector('[class*="dijitPopup"], [class*="dijitComboDropDown"], [class*="tableau-popup"], [class*="tabComboBoxMenu"], [id*="Popup"]');
+      var popupHTML = popup ? popup.outerHTML.substring(0, 1000) : null;
+      return { matchingEls: allText, popupHTML: popupHTML, bodyChildCount: document.body.children.length };
+    });
+    console.log('Portland: popup info after combo click:', JSON.stringify(popupInfo));
+
+    // If we found shooting type options, click "Non-Fatal Injury"
+    if (popupInfo.matchingEls.length > 0) {
+      const clicked = await page.evaluate(function() {
+        var allEls = Array.from(document.querySelectorAll('*'));
+        var el = allEls.find(function(e) {
+          return (e.innerText || e.textContent || '').trim() === 'Non-Fatal Injury';
+        });
+        if (el) { el.click(); return 'clicked Non-Fatal Injury'; }
+        // Try Homicide as fallback
+        el = allEls.find(function(e) {
+          return (e.innerText || e.textContent || '').trim() === 'Homicide';
+        });
+        if (el) { el.click(); return 'clicked Homicide'; }
+        return 'option not found';
+      });
+      console.log('Portland: option click result:', clicked);
+      if (clicked.startsWith('clicked')) {
+        await page.waitForTimeout(4000);
+        paramSet = true;
+
+        // Also need to click "Non-Fatal Injury" again OR find Apply/OK button if multi-select
+        // First check what the combo shows now
+        const currentVal = await page.evaluate(function() {
+          var combo = document.querySelector('.tabComboBoxName');
+          return combo ? combo.textContent : 'not found';
+        });
+        console.log('Portland: combo value after selection:', currentVal);
+
+        // If still showing "All" or combo is still open, try clicking apply or pressing Enter
+        if (currentVal === 'All' || currentVal === 'not found') {
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(1000);
+        }
+      }
+    } else {
+      // Log the body-level popups that appeared
+      const bodyInfo = await page.evaluate(function() {
+        var bodyChildren = Array.from(document.body.children);
+        return bodyChildren.slice(-5).map(function(el) {
+          return { cls: el.className, id: el.id, text: (el.innerText||el.textContent||'').substring(0,200) };
+        });
+      });
+      console.log('Portland: body children after click:', JSON.stringify(bodyInfo));
     }
   } catch(e) {
-    console.log('Portland: JS API failed:', e.message.split('\n')[0]);
-  }
-
-  // Strategy B: Click the ParameterControl value display to open its dropdown, then click option
-  if (!paramSet) {
-    try {
-      // The ParameterControl Dojo widget has a clickable value area - try clicking it
-      // and inspecting what appears in the DOM after the click
-      await page.evaluate(function() {
-        var pc = document.querySelector('.ParameterControl');
-        if (!pc) throw new Error('no ParameterControl');
-        // Click on the value display area (usually a div/span after the title)
-        var clickable = pc.querySelector('.ParameterControlBox > div:not(.Title), .tab-widget-content, [dojoattachpoint="domDropDown"], [dojoattachpoint="domInput"]');
-        if (clickable) { clickable.click(); return 'clicked: ' + clickable.className; }
-        // Fallback: click anywhere inside the control except the title
-        var title = pc.querySelector('.Title');
-        var allInner = Array.from(pc.querySelectorAll('*')).filter(function(e) { return !title || !title.contains(e); });
-        if (allInner.length > 0) { allInner[0].click(); return 'clicked inner: ' + allInner[0].tagName + '.' + allInner[0].className; }
-        throw new Error('nothing to click');
-      });
-      await page.waitForTimeout(1500);
-
-      // Log the full ParameterControl HTML now (may have expanded)
-      const pcAfterClick = await page.evaluate(function() {
-        var pc = document.querySelector('.ParameterControl');
-        return pc ? pc.outerHTML : 'not found';
-      });
-      console.log('Portland: ParameterControl after click (full):', pcAfterClick.substring(0, 2000));
-
-      // Also check if any new popup/dropdown appeared
-      const popupText = await page.evaluate(function() {
-        var popup = document.querySelector('[class*="dijitPopup"], [class*="dijitDropDown"], [class*="dijitMenu"], [class*="tableau_popup"]');
-        return popup ? popup.innerText || popup.textContent : 'no popup found';
-      });
-      console.log('Portland: popup after click:', popupText.substring(0, 500));
-
-    } catch(e) {
-      console.log('Portland: Strategy B failed:', e.message.split('\n')[0]);
-    }
+    console.log('Portland: combo click failed:', e.message.split('\n')[0]);
   }
 
   if (!paramSet) {
-    console.log('Portland: WARNING - parameter not set, will screenshot unfiltered view (all shooting types)');
+    console.log('Portland: WARNING - parameter not set, screenshot will include all shooting types');
   }
 
   // Step 3: Screenshot the YTD Comparison bar chart and send to vision API
