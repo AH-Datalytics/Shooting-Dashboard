@@ -1047,35 +1047,41 @@ async function fetchPortland() {
   const bodyText = await page.evaluate(function() { return document.body.innerText; });
   console.log('Portland embed text (first 400):', bodyText.substring(0, 400));
 
-  // Log all tab-like elements
-  const tabs = await page.evaluate(function() {
-    var els = document.querySelectorAll('[class*="tab"], [role="tab"], [data-tb-test-id*="tab"], li, .tabTextContainer');
-    return Array.from(els).map(function(e) {
-      return (e.textContent || '').trim().substring(0, 60) + ' | ' + (e.className || '').substring(0, 40);
-    }).filter(function(s) { return s.trim().length > 3; }).slice(0, 30);
-  });
-  console.log('Portland: tab elements:', JSON.stringify(tabs, null, 1));
-
-  // Try clicking the Download Open Data tab with multiple strategies
+  // Click "Download Open Data" tab — use innerText match to avoid SVGAnimatedString crash
+  console.log('Portland: clicking Download Open Data tab via innerText...');
   let tabClicked = false;
-  const tabCandidates = [
-    '[data-tb-test-id*="Download"]',
-    '[data-tb-test-id*="Open"]',
-    'li:has-text("Download Open Data")',
-    'li:has-text("Download")',
-    '.tabTextContainer:has-text("Download")',
-    'text=Download Open Data',
-    'text=Open Data',
-  ];
-  for (const sel of tabCandidates) {
-    try {
-      await forceClick(page.locator(sel).first(), 4000);
-      await page.waitForTimeout(4000);
-      console.log('Portland: tab clicked with selector:', sel);
-      tabClicked = true;
-      break;
-    } catch(e) {
-      console.log('Portland: tab selector failed:', sel);
+  try {
+    await page.evaluate(function() {
+      var all = Array.from(document.querySelectorAll('*'));
+      var el = all.find(function(e) {
+        var txt = (e.innerText || e.textContent || '').trim();
+        return txt === 'Download Open Data' || txt === 'Download Open Data';
+      });
+      if (el) el.click();
+      else throw new Error('Download Open Data tab not found in DOM');
+    });
+    await page.waitForTimeout(5000);
+    console.log('Portland: tab clicked via innerText');
+    tabClicked = true;
+  } catch(e) {
+    console.log('Portland: innerText tab click failed:', e.message.split('\n')[0]);
+    // Fallback: Playwright text locator
+    const tabCandidates = [
+      'text=Download Open Data',
+      'li:has-text("Download Open Data")',
+      '[role="tab"]:has-text("Download")',
+      'text=Open Data',
+    ];
+    for (const sel of tabCandidates) {
+      try {
+        await forceClick(page.locator(sel).first(), 4000);
+        await page.waitForTimeout(4000);
+        console.log('Portland: tab clicked with selector:', sel);
+        tabClicked = true;
+        break;
+      } catch(e2) {
+        console.log('Portland: tab selector failed:', sel);
+      }
     }
   }
 
@@ -1115,12 +1121,12 @@ async function fetchPortland() {
     }
   }
 
-  // If still no CSV, log all links/buttons on the page for diagnosis
+  // If still no CSV, log all links/buttons (safe version — no className access)
   if (!csvText) {
     const links = await page.evaluate(function() {
       var els = document.querySelectorAll('a, button');
       return Array.from(els).map(function(e) {
-        return (e.textContent || '').trim().substring(0,50) + ' | href=' + (e.href||'') + ' | ' + (e.className||'').substring(0,30);
+        return (e.textContent || '').trim().substring(0,50) + ' | href=' + (e.href||'');
       }).filter(function(s) { return s.trim().length > 3; }).slice(0, 40);
     });
     console.log('Portland: all links/buttons:', JSON.stringify(links, null, 1));
