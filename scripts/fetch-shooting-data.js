@@ -1122,27 +1122,49 @@ async function fetchPortland() {
   await browser.close();
   console.log('Portland: screenshot taken, size:', screenshotBuf.length, 'bytes');
 
-  const Anthropic = require('@anthropic-ai/sdk');
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const b64 = screenshotBuf.toString('base64');
+  const base64Image = screenshotBuf.toString('base64');
+  const promptText = 'This is a Portland Police Bureau Tableau dashboard showing shooting incident statistics. Find the "Year-to-Date Comparison" bar chart. It shows yearly totals excluding No Injury shootings (Homicide + Non-Fatal Injury only). Extract the YTD total for ' + yr + ' and for ' + (yr-1) + '. Reply ONLY in this exact format: YTD' + yr + '=N YTD' + (yr-1) + '=N';
 
-  const visionResp = await client.messages.create({
-    model: 'claude-opus-4-5',
-    max_tokens: 256,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: b64 } },
-        { type: 'text', text: 'This is a Tableau dashboard showing Portland shooting incident statistics. Find the "Year-to-Date Comparison" bar chart. It shows yearly totals for shooting incidents (Homicide + Non-Fatal Injury, excluding No Injury). Extract the YTD total for ' + yr + ' and for ' + (yr-1) + '. Reply only in this exact format: YTD' + yr + '=N YTD' + (yr-1) + '=N' }
-      ]
-    }]
+  const claudeData = await new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 256,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64Image } },
+          { type: 'text', text: promptText }
+        ]
+      }]
+    });
+    const req = require('https').request({
+      hostname: 'api.anthropic.com',
+      path: '/v1/messages',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'Content-Length': Buffer.byteLength(body)
+      }
+    }, (res) => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
+        catch(e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
   });
 
-  const visionText = visionResp.content[0].text.trim();
+  const visionText = claudeData.content?.[0]?.text?.trim() || '';
   console.log('Portland vision response:', visionText);
 
-  const ytdMatch   = visionText.match(new RegExp('YTD' + yr + '=(\\d+)'));
-  const priorMatch = visionText.match(new RegExp('YTD' + (yr-1) + '=(\\d+)'));
+  const ytdMatch   = visionText.match(new RegExp('YTD' + yr + '=(\d+)'));
+  const priorMatch = visionText.match(new RegExp('YTD' + (yr-1) + '=(\d+)'));
 
   if (!ytdMatch || !priorMatch) throw new Error('Portland: vision parse failed: ' + visionText);
 
