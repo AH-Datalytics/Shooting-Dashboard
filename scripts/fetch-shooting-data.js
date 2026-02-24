@@ -1021,8 +1021,8 @@ main().catch(e => { console.error(e); process.exit(1); });
 
 
 // ─── Portland (Tableau - PPB Shooting Incident Statistics) ───────────────────
-// Downloads raw incident CSV via Tableau Public's data download endpoint.
-// Filters to Homicide + Non-Fatal Injury, counts by year.
+// Tableau Public embeds the viz in an iframe. We navigate directly to the
+// viz embed URL, then download the raw incident CSV from the toolbar.
 
 async function fetchPortland() {
   const { chromium } = require('playwright');
@@ -1037,26 +1037,35 @@ async function fetchPortland() {
     await locator.click({ force: true, timeout: timeout || 10000 });
   }
 
-  console.log('Portland: loading Tableau dashboard...');
-  await page.goto('https://public.tableau.com/views/PortlandShootingIncidentStatistics/ShootingIncidentStatistics', {
-    waitUntil: 'domcontentloaded', timeout: 60000
-  });
+  // Use the embed URL directly — bypasses the gallery wrapper page
+  const embedUrl = 'https://public.tableau.com/views/PortlandShootingIncidentStatistics/ShootingIncidentStatistics?:showVizHome=no&:embed=true&:toolbar=yes';
+  console.log('Portland: loading viz embed...');
+  await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(12000);
 
-  // Log all visible text to find the correct tab name
+  // Log page text to confirm we're inside the viz
   const bodyText = await page.evaluate(function() { return document.body.innerText; });
-  console.log('Portland page text (first 600):', bodyText.substring(0, 600));
+  console.log('Portland embed text (first 400):', bodyText.substring(0, 400));
 
-  // Try multiple selectors for the download tab
+  // Log all tab-like elements
+  const tabs = await page.evaluate(function() {
+    var els = document.querySelectorAll('[class*="tab"], [role="tab"], [data-tb-test-id*="tab"], li, .tabTextContainer');
+    return Array.from(els).map(function(e) {
+      return (e.textContent || '').trim().substring(0, 60) + ' | ' + (e.className || '').substring(0, 40);
+    }).filter(function(s) { return s.trim().length > 3; }).slice(0, 30);
+  });
+  console.log('Portland: tab elements:', JSON.stringify(tabs, null, 1));
+
+  // Try clicking the Download Open Data tab with multiple strategies
   let tabClicked = false;
   const tabCandidates = [
+    '[data-tb-test-id*="Download"]',
+    '[data-tb-test-id*="Open"]',
+    'li:has-text("Download Open Data")',
+    'li:has-text("Download")',
+    '.tabTextContainer:has-text("Download")',
     'text=Download Open Data',
-    'text=Download',
     'text=Open Data',
-    'text=Data Download',
-    '[data-tab-name*="Download"]',
-    '[data-tab-name*="Open"]',
-    '.tabTextContainer >> text=Download',
   ];
   for (const sel of tabCandidates) {
     try {
@@ -1066,27 +1075,18 @@ async function fetchPortland() {
       tabClicked = true;
       break;
     } catch(e) {
-      console.log('Portland: selector failed:', sel);
+      console.log('Portland: tab selector failed:', sel);
     }
   }
 
-  if (!tabClicked) {
-    // Log all tab-like elements
-    const tabs = await page.evaluate(function() {
-      var els = document.querySelectorAll('[class*="tab"], [role="tab"], [data-tab-name]');
-      return Array.from(els).map(function(e) { return e.textContent.trim() + ' | ' + e.className; }).slice(0,20);
-    });
-    console.log('Portland: visible tab elements:', JSON.stringify(tabs));
-  }
-
-  // Now try to find and click the download link
+  // Try to intercept the CSV download
   let csvText = null;
   const linkCandidates = [
     'text=Click Here to Download Data',
     'text=Download Data',
     'text=Click Here',
+    'a[href*=".csv"]',
     'a[href*="download"]',
-    'a[href*="csv"]',
     'button:has-text("Download")',
   ];
   for (const sel of linkCandidates) {
@@ -1107,7 +1107,7 @@ async function fetchPortland() {
       if (!csvText.includes(',') && !csvText.includes('\t')) {
         csvText = buf.toString('utf16le').replace(/^\uFEFF/, '');
       }
-      console.log('Portland: downloaded via selector:', sel, '| bytes:', buf.length);
+      console.log('Portland: downloaded via:', sel, '| bytes:', buf.length);
       console.log('Portland: CSV preview:', csvText.substring(0, 300));
       break;
     } catch(e) {
@@ -1115,56 +1115,58 @@ async function fetchPortland() {
     }
   }
 
+  // If still no CSV, log all links/buttons on the page for diagnosis
+  if (!csvText) {
+    const links = await page.evaluate(function() {
+      var els = document.querySelectorAll('a, button');
+      return Array.from(els).map(function(e) {
+        return (e.textContent || '').trim().substring(0,50) + ' | href=' + (e.href||'') + ' | ' + (e.className||'').substring(0,30);
+      }).filter(function(s) { return s.trim().length > 3; }).slice(0, 40);
+    });
+    console.log('Portland: all links/buttons:', JSON.stringify(links, null, 1));
+  }
+
   await browser.close();
 
   if (!csvText) throw new Error('Portland: could not download CSV — check tab/link selectors in logs');
 
-  // Parse: CSV with headers, filter Shooting Type = Homicide or Non-Fatal Injury
-  const lines = csvText.split('\n').map(function(l) { return l.replace(/\r/g, '').trim(); }).filter(Boolean);
-  const headers = lines[0].split(',').map(function(h) { return h.replace(/"/g, '').trim(); });
+  // Parse CSV
+  const lines = csvText.split('\n').map(function(l) { return l.replace(/\r/g,'').trim(); }).filter(Boolean);
+  const headers = lines[0].split(',').map(function(h) { return h.replace(/"/g,'').trim(); });
   console.log('Portland: headers:', headers);
 
   var yearCol = headers.indexOf('Occur Year');
   var typeCol = headers.indexOf('Shooting Type');
   var dateCol = headers.indexOf('Occurence Date');
 
-  // Tab-delimited fallback
   if (yearCol < 0) {
-    var hdrTab = lines[0].split('\t').map(function(h) { return h.replace(/"/g, '').trim(); });
+    var hdrTab = lines[0].split('\t').map(function(h) { return h.replace(/"/g,'').trim(); });
     yearCol = hdrTab.indexOf('Occur Year');
     typeCol = hdrTab.indexOf('Shooting Type');
     dateCol = hdrTab.indexOf('Occurence Date');
     if (yearCol >= 0) {
-      var ytd = 0, prior = 0, maxDate = null;
-      for (var i = 1; i < lines.length; i++) {
-        var cols = lines[i].split('\t').map(function(c) { return c.replace(/"/g, '').trim(); });
-        if (cols[typeCol] !== 'Homicide' && cols[typeCol] !== 'Non-Fatal Injury') continue;
-        if (cols[yearCol] === String(yr))     { ytd++;   if (dateCol >= 0 && cols[dateCol] > (maxDate||'')) maxDate = cols[dateCol]; }
-        if (cols[yearCol] === String(yr - 1)) prior++;
-      }
-      return buildResult(ytd, prior, maxDate, yr);
+      return parseAndBuild(lines, '\t', yearCol, typeCol, dateCol, yr);
     }
+    throw new Error('Portland: columns not found. Headers: ' + lines[0].substring(0,200));
   }
 
-  if (yearCol < 0) throw new Error('Portland: could not find year column. Headers: ' + lines[0].substring(0,200));
+  return parseAndBuild(lines, ',', yearCol, typeCol, dateCol, yr);
 
-  var ytd = 0, prior = 0, maxDate = null;
-  for (var i = 1; i < lines.length; i++) {
-    var cols = lines[i].split(',').map(function(c) { return c.replace(/"/g, '').trim(); });
-    if (cols[typeCol] !== 'Homicide' && cols[typeCol] !== 'Non-Fatal Injury') continue;
-    if (cols[yearCol] === String(yr))     { ytd++;   if (dateCol >= 0 && cols[dateCol] > (maxDate||'')) maxDate = cols[dateCol]; }
-    if (cols[yearCol] === String(yr - 1)) prior++;
-  }
-
-  return buildResult(ytd, prior, maxDate, yr);
-
-  function buildResult(ytd, prior, maxDate, yr) {
+  function parseAndBuild(lines, sep, yearCol, typeCol, dateCol, yr) {
+    var ytd = 0, prior = 0, maxDate = null;
+    for (var i = 1; i < lines.length; i++) {
+      var cols = lines[i].split(sep).map(function(c) { return c.replace(/"/g,'').trim(); });
+      var t = cols[typeCol];
+      if (t !== 'Homicide' && t !== 'Non-Fatal Injury') continue;
+      if (cols[yearCol] === String(yr))     { ytd++;   if (dateCol >= 0 && cols[dateCol] > (maxDate||'')) maxDate = cols[dateCol]; }
+      if (cols[yearCol] === String(yr - 1)) prior++;
+    }
     console.log('Portland final: ytd=' + ytd + ' prior=' + prior + ' maxDate=' + maxDate);
-    if (ytd === 0 && prior === 0) throw new Error('Portland: parsed all zeros — check CSV structure');
+    if (ytd === 0 && prior === 0) throw new Error('Portland: parsed all zeros');
     var asof = yr + '-12-31';
     if (maxDate) {
-      var parts = maxDate.split('/');
-      if (parts.length === 3) asof = parts[2] + '-' + parts[0].padStart(2,'0') + '-' + parts[1].padStart(2,'0');
+      var p = maxDate.split('/');
+      if (p.length === 3) asof = p[2] + '-' + p[0].padStart(2,'0') + '-' + p[1].padStart(2,'0');
     }
     return { ytd: ytd, prior: prior, asof: asof };
   }
