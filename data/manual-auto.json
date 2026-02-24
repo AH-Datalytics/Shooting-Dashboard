@@ -3,35 +3,35 @@
     "ytd": 34,
     "prior": 50,
     "asof": "2026-02-19",
-    "fetchedAt": "2026-02-24T20:31:19.302Z",
+    "fetchedAt": "2026-02-24T20:44:44.054Z",
     "ok": true
   },
   "durham": {
     "ytd": 16,
     "prior": 20,
     "asof": "2026-02-21",
-    "fetchedAt": "2026-02-24T20:31:19.302Z",
+    "fetchedAt": "2026-02-24T20:44:44.054Z",
     "ok": true
   },
   "milwaukee": {
     "ytd": 46,
     "prior": 56,
     "asof": "2026-02-23",
-    "fetchedAt": "2026-02-24T20:31:19.302Z",
+    "fetchedAt": "2026-02-24T20:44:44.054Z",
     "ok": true
   },
   "memphis": {
     "ytd": 70,
     "prior": 94,
     "asof": "2026-02-23",
-    "fetchedAt": "2026-02-24T20:31:19.302Z",
+    "fetchedAt": "2026-02-24T20:44:44.054Z",
     "ok": true
   },
   "hampton": {
     "ytd": 0,
     "prior": 4,
-    "asof": "2025-01-31",
-    "fetchedAt": "2026-02-24T20:31:19.302Z",
+    "asof": "2026-01-31",
+    "fetchedAt": "2026-02-24T20:44:44.054Z",
     "ok": true
   },
   "omaha": {
@@ -45,19 +45,19 @@
     "ytd": 15,
     "prior": 26,
     "asof": null,
-    "fetchedAt": "2026-02-24T20:31:19.302Z",
+    "fetchedAt": "2026-02-24T20:44:44.054Z",
     "ok": true
   },
   "pittsburgh": {
     "ytd": 10,
     "prior": 12,
     "asof": "2026-02-24",
-    "fetchedAt": "2026-02-24T20:31:19.302Z",
+    "fetchedAt": "2026-02-24T20:44:44.054Z",
     "ok": true
   },
   "buffalo": {
     "ok": false,
-    "error": "Could not parse Buffalo YTD. Response: I can see the GIVE Shooting Activity dashboard, but the chart only displays data through 2025. January 2026 data is not yet available on this dashboard.\n\nFrom the visible data for January 2025, I cannot provide accurate readings as the exact values are not clearly labeled on the chart at that specific point.\n\nI cannot complete this request as specified.",
-    "fetchedAt": "2026-02-24T20:31:19.302Z"
+    "error": "Buffalo: could not download CSV",
+    "fetchedAt": "2026-02-24T20:44:44.054Z"
   }
 }
