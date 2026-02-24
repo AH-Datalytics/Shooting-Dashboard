@@ -54,5 +54,12 @@
     "asof": "2026-02-23",
     "fetchedAt": "2026-02-24T04:08:19.433Z",
     "ok": true
+  },
+  "buffalo": {
+    "ytd": null,
+    "prior": null,
+    "asof": null,
+    "fetchedAt": "2026-02-24T19:59:17.574Z",
+    "ok": false
   }
 }
