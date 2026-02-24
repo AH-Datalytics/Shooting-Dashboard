@@ -968,107 +968,46 @@ async function main() {
   const outDir = path.join(__dirname, '..', 'data');
   const outPath = path.join(outDir, 'manual-auto.json');
 
-  // Load existing output to preserve manually-updated cities (Omaha)
   let existing = {};
   try { existing = JSON.parse(fs.readFileSync(outPath, 'utf8')); } catch (e) { /* first run */ }
 
   const results = {};
 
-  // Detroit
-  try {
-    console.log('\n--- Fetching Detroit ---');
-    results.detroit = { ...(await fetchDetroit()), fetchedAt, ok: true };
-    console.log('Detroit:', results.detroit);
-  } catch (e) {
-    console.error('Detroit error:', e.message);
-    results.detroit = { ok: false, error: e.message, fetchedAt };
+  // Helper: wrap a fetch with a timeout and catch errors without throwing
+  function safe(name, fn, timeoutMs) {
+    timeoutMs = timeoutMs || 120000;
+    const timer = new Promise((_, reject) => setTimeout(() => reject(new Error(name + ' timed out after ' + (timeoutMs/1000) + 's')), timeoutMs));
+    return Promise.race([fn(), timer])
+      .then(function(r) {
+        console.log('\n--- ' + name + ' OK ---');
+        console.log(name + ':', { ...r, fetchedAt, ok: true });
+        return { key: name.toLowerCase().replace(/[^a-z]/g,''), value: { ...r, fetchedAt, ok: true } };
+      })
+      .catch(function(e) {
+        console.error('\n--- ' + name + ' FAILED:', e.message, '---');
+        return { key: name.toLowerCase().replace(/[^a-z]/g,''), value: { ok: false, error: e.message, fetchedAt } };
+      });
   }
 
-  // Durham
-  try {
-    console.log('\n--- Fetching Durham ---');
-    results.durham = { ...(await fetchDurham()), fetchedAt, ok: true };
-    console.log('Durham:', results.durham);
-  } catch (e) {
-    console.error('Durham error:', e.message);
-    results.durham = { ok: false, error: e.message, fetchedAt };
-  }
-
-  // Milwaukee
-  try {
-    console.log('\n--- Fetching Milwaukee ---');
-    results.milwaukee = { ...(await fetchMilwaukee()), fetchedAt, ok: true };
-    console.log('Milwaukee:', results.milwaukee);
-  } catch (e) {
-    console.error('Milwaukee error:', e.message);
-    results.milwaukee = { ok: false, error: e.message, fetchedAt };
-  }
-
-  // Memphis
-  try {
-    console.log('\n--- Fetching Memphis ---');
-    results.memphis = { ...(await fetchMemphis()), fetchedAt, ok: true };
-    console.log('Memphis:', results.memphis);
-  } catch (e) {
-    console.error('Memphis error:', e.message);
-    results.memphis = { ok: false, error: e.message, fetchedAt };
-  }
-
-  // Hampton
-  try {
-    console.log('\n--- Fetching Hampton ---');
-    results.hampton = { ...(await fetchHampton()), fetchedAt, ok: true };
-    console.log('Hampton:', results.hampton);
-  } catch (e) {
-    console.error('Hampton error:', e.message);
-    results.hampton = { ok: false, error: e.message, fetchedAt };
-  }
-
-  // Omaha — manually updated, preserve existing value from manual-auto.json
+  // Omaha is manual — preserve existing
   results.omaha = existing.omaha || { ok: false, error: 'No manual data yet' };
-  console.log('Omaha (manual):', results.omaha);
 
-  // MiamiDade
-  try {
-    console.log('\n--- Fetching MiamiDade ---');
-    results.miamidade = { ...(await fetchMiamiDade()), fetchedAt, ok: true };
-    console.log('MiamiDade:', results.miamidade);
-  } catch (e) {
-    console.error('MiamiDade error:', e.message);
-    results.miamidade = { ok: false, error: e.message, fetchedAt };
-  }
+  // Run all fetches in parallel
+  console.log('Starting all fetches in parallel...');
+  const fetches = await Promise.all([
+    safe('Detroit',    fetchDetroit,    60000),
+    safe('Durham',     fetchDurham,     60000),
+    safe('Milwaukee',  fetchMilwaukee,  60000),
+    safe('Memphis',    fetchMemphis,    120000),
+    safe('Hampton',    fetchHampton,    60000),
+    safe('MiamiDade',  fetchMiamiDade,  120000),
+    safe('Pittsburgh', fetchPittsburgh, 120000),
+    safe('Portland',   fetchPortland,   120000),
+    safe('Buffalo',    fetchBuffalo,    120000),
+  ]);
 
-  // Pittsburgh (90s hard timeout to prevent hanging)
-  try {
-    console.log('\n--- Fetching Pittsburgh ---');
-    const pittTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Pittsburgh timed out after 120s')), 120000));
-    results.pittsburgh = { ...(await Promise.race([fetchPittsburgh(), pittTimeout])), fetchedAt, ok: true };
-    console.log('Pittsburgh:', results.pittsburgh);
-  } catch (e) {
-    console.error('Pittsburgh error:', e.message);
-    results.pittsburgh = { ok: false, error: e.message, fetchedAt };
-  }
-
-  // Portland
-  try {
-    console.log('\n--- Fetching Portland ---');
-    const portTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Portland timed out after 120s')), 120000));
-    results.portland = { ...(await Promise.race([fetchPortland(), portTimeout])), fetchedAt, ok: true };
-    console.log('Portland:', results.portland);
-  } catch (e) {
-    console.error('Portland error:', e.message);
-    results.portland = { ok: false, error: e.message, fetchedAt };
-  }
-
-  // Buffalo
-  try {
-    console.log('\n--- Fetching Buffalo ---');
-    const bufTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Buffalo timed out after 120s')), 120000));
-    results.buffalo = { ...(await Promise.race([fetchBuffalo(), bufTimeout])), fetchedAt, ok: true };
-    console.log('Buffalo:', results.buffalo);
-  } catch (e) {
-    console.error('Buffalo error:', e.message);
-    results.buffalo = { ok: false, error: e.message, fetchedAt };
+  for (const { key, value } of fetches) {
+    results[key] = value;
   }
 
   // Write output
