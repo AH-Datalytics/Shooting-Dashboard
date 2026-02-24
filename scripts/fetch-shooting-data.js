@@ -587,6 +587,12 @@ async function fetchBuffalo() {
 
   const yr = new Date().getFullYear();
 
+  // Tableau has a transparent glass overlay (tab-glass) that intercepts pointer events.
+  // Use force:true on all clicks to bypass it.
+  async function forceClick(locator, timeout = 8000) {
+    await locator.click({ force: true, timeout });
+  }
+
   // Step 1: Load dashboard
   console.log('Buffalo: loading GIVE dashboard...');
   await page.goto('https://mypublicdashboard.ny.gov/t/OJRP_PUBLIC/views/GIVEInitiative/GIVE-LandingPage', { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -595,7 +601,7 @@ async function fetchBuffalo() {
   // Step 2: Click GIVE-Shooting Activity tab
   console.log('Buffalo: clicking Shooting Activity tab...');
   try {
-    await page.locator('text=GIVE-Shooting Activity').first().click({ timeout: 10000 });
+    await forceClick(page.locator('text=GIVE-Shooting Activity').first());
     await page.waitForTimeout(8000);
     console.log('Buffalo: on Shooting Activity tab');
   } catch(e) { console.log('Buffalo: tab click failed:', e.message); }
@@ -606,22 +612,26 @@ async function fetchBuffalo() {
     const allEls = page.locator('text=(All)');
     const count = await allEls.count();
     console.log('Buffalo: (All) count:', count);
-    await allEls.nth(count >= 2 ? 1 : 0).click({ timeout: 8000 });
+    await forceClick(allEls.nth(count >= 2 ? 1 : 0));
     await page.waitForTimeout(3000);
+    console.log('Buffalo: jurisdiction dropdown opened');
   } catch(e) { console.log('Buffalo: jurisdiction open failed:', e.message); }
 
-  // Step 4: Deselect all (click (All) inside dropdown)
+  // Step 4: Deselect all inside dropdown
   console.log('Buffalo: deselecting all...');
   try {
     const allEls = page.locator('text=(All)');
-    await allEls.last().click({ timeout: 5000 });
+    const count = await allEls.count();
+    console.log('Buffalo: (All) count after open:', count);
+    await forceClick(allEls.last());
     await page.waitForTimeout(1000);
+    console.log('Buffalo: deselected all');
   } catch(e) { console.log('Buffalo: deselect all failed:', e.message); }
 
   // Step 5: Select Buffalo City PD
   console.log('Buffalo: selecting Buffalo City PD...');
   try {
-    await page.locator('text=Buffalo City PD').first().click({ timeout: 8000 });
+    await forceClick(page.locator('text=Buffalo City PD').first());
     await page.waitForTimeout(1000);
     console.log('Buffalo: selected Buffalo City PD');
   } catch(e) { console.log('Buffalo: Buffalo City PD click failed:', e.message); }
@@ -629,7 +639,7 @@ async function fetchBuffalo() {
   // Step 6: Click Apply
   console.log('Buffalo: clicking Apply...');
   try {
-    await page.locator('text=Apply').first().click({ timeout: 8000 });
+    await forceClick(page.locator('text=Apply').first());
     await page.waitForTimeout(6000);
     console.log('Buffalo: applied filter');
   } catch(e) { console.log('Buffalo: Apply failed:', e.message); }
@@ -637,53 +647,52 @@ async function fetchBuffalo() {
   // Step 7: Click Monthly Data toggle
   console.log('Buffalo: clicking Monthly Data...');
   try {
-    await page.locator('text=Monthly Data').first().click({ timeout: 8000 });
-    await page.waitForTimeout(6000);
+    await forceClick(page.locator('text=Monthly Data').first());
+    await page.waitForTimeout(8000);
     console.log('Buffalo: switched to Monthly Data');
   } catch(e) { console.log('Buffalo: Monthly Data click failed:', e.message); }
 
-  // Step 8: Open Download menu (toolbar button)
-  console.log('Buffalo: opening download menu...');
+  // Step 8: Click Download toolbar button
+  // data-tb-test-id="viz-viewer-toolbar-button-download" was visible in prior logs
+  console.log('Buffalo: clicking Download toolbar button...');
   try {
-    await page.locator('[title="Download"]').first().click({ timeout: 8000 });
+    await forceClick(page.locator('[data-tb-test-id="viz-viewer-toolbar-button-download"]').first());
     await page.waitForTimeout(2000);
-  } catch(e) {
-    try {
-      await page.locator('text=Download').last().click({ timeout: 5000 });
-      await page.waitForTimeout(2000);
-    } catch(e2) { console.log('Buffalo: download button click failed:', e.message); }
-  }
+    console.log('Buffalo: download menu opened');
+  } catch(e) { console.log('Buffalo: download button failed:', e.message); }
 
-  // Step 9: Click "Crosstab" option in download menu
+  // Step 9: Click Crosstab in dropdown menu
   console.log('Buffalo: clicking Crosstab...');
   try {
-    await page.locator('text=Crosstab').first().click({ timeout: 8000 });
+    await forceClick(page.locator('text=Crosstab').first());
     await page.waitForTimeout(2000);
+    console.log('Buffalo: crosstab dialog opened');
   } catch(e) { console.log('Buffalo: Crosstab click failed:', e.message); }
 
-  // Step 10: Select "Monthly Total Overview" sheet if dialog shown
-  console.log('Buffalo: selecting Monthly Total Overview sheet...');
+  // Step 10: Select Monthly Total Overview sheet
+  console.log('Buffalo: selecting Monthly Total Overview...');
   try {
-    await page.locator('text=Monthly Total Overview').first().click({ timeout: 5000 });
+    await forceClick(page.locator('text=Monthly Total Overview').first(), 5000);
     await page.waitForTimeout(1000);
-  } catch(e) { console.log('Buffalo: sheet selection failed (may already be selected):', e.message); }
+    console.log('Buffalo: selected Monthly Total Overview');
+  } catch(e) { console.log('Buffalo: sheet selection failed:', e.message); }
 
-  // Step 11: Select CSV format
-  console.log('Buffalo: selecting CSV format...');
+  // Step 11: Select CSV radio button
+  console.log('Buffalo: selecting CSV...');
   try {
-    await page.locator('text=CSV').first().click({ timeout: 5000 });
-    await page.waitForTimeout(1000);
+    await forceClick(page.locator('text=CSV').first(), 5000);
+    await page.waitForTimeout(500);
+    console.log('Buffalo: CSV selected');
   } catch(e) { console.log('Buffalo: CSV select failed:', e.message); }
 
-  // Step 12: Click Download button and capture the file
-  console.log('Buffalo: downloading CSV...');
+  // Step 12: Click Download button and capture file
+  console.log('Buffalo: clicking Download button...');
   let csvText = null;
   try {
     const [ download ] = await Promise.all([
       page.waitForEvent('download', { timeout: 30000 }),
-      page.locator('button:has-text("Download")').last().click({ timeout: 8000 })
+      forceClick(page.locator('button:has-text("Download")').last())
     ]);
-    await page.waitForTimeout(3000);
     const stream = await download.createReadStream();
     const chunks = [];
     await new Promise((res, rej) => {
@@ -693,7 +702,7 @@ async function fetchBuffalo() {
     });
     csvText = Buffer.concat(chunks).toString('utf8');
     console.log('Buffalo: CSV downloaded, length:', csvText.length);
-    console.log('Buffalo: CSV preview:', csvText.substring(0, 500));
+    console.log('Buffalo: CSV preview:\n', csvText.substring(0, 800));
   } catch(e) {
     console.log('Buffalo: CSV download failed:', e.message);
   }
@@ -702,61 +711,68 @@ async function fetchBuffalo() {
 
   if (!csvText) throw new Error('Buffalo: could not download CSV');
 
-  // Parse CSV: find rows for current and prior January
-  // Expected columns include: Month, Metric, Value (or similar)
-  // Metrics: "Shooting Victims (Persons Hit)" and "Individuals Killed By Gun Violence"
-  const lines = csvText.split('\n').map(l => l.trim()).filter(Boolean);
-  console.log('Buffalo CSV headers:', lines[0]);
-  console.log('Buffalo CSV row count:', lines.length);
-
-  // Parse header to find column indices
-  const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim().toLowerCase());
-  console.log('Buffalo CSV headers parsed:', headers);
+  // Parse CSV
+  // Expected layout from Tableau crosstab: rows are metrics, columns include months
+  // OR: rows are months, columns are metrics — log will tell us
+  const rows = csvText.split('\n').map(l => l.trim()).filter(Boolean);
+  console.log('Buffalo CSV row 0 (headers):', rows[0]);
+  console.log('Buffalo CSV row 1:', rows[1]);
+  console.log('Buffalo CSV row 2:', rows[2]);
 
   const janCurr  = `Jan-${String(yr).slice(2)}`;
   const janPrior = `Jan-${String(yr - 1).slice(2)}`;
 
-  let victimsJanCurr = 0, victimsJanPrior = 0;
-  let killedJanCurr  = 0, killedJanPrior  = 0;
+  // Parse header row to find column indices for janCurr and janPrior
+  const parseCSVRow = (line) => {
+    const result = [];
+    let cur = '', inQ = false;
+    for (const ch of line) {
+      if (ch === '"') { inQ = !inQ; }
+      else if (ch === ',' && !inQ) { result.push(cur.trim()); cur = ''; }
+      else { cur += ch; }
+    }
+    result.push(cur.trim());
+    return result;
+  };
 
-  for (let i = 1; i < lines.length; i++) {
-    // Handle quoted CSV fields
-    const cols = lines[i].match(/(".*?"|[^,]+)(?=,|$)/g) || lines[i].split(',');
-    const clean = cols.map(c => c.replace(/^"|"$/g, '').trim());
+  const headers = parseCSVRow(rows[0]);
+  console.log('Buffalo CSV headers:', headers);
 
-    const rowStr = lines[i].toLowerCase();
-    const isVictims = rowStr.includes('shooting victims') || rowStr.includes('persons hit');
-    const isKilled  = rowStr.includes('individuals killed') || rowStr.includes('gun violence');
+  const janCurrCol  = headers.findIndex(h => h.includes(janCurr));
+  const janPriorCol = headers.findIndex(h => h.includes(janPrior));
+  console.log(`Buffalo: janCurr col=${janCurrCol} janPrior col=${janPriorCol}`);
 
+  let victimsYtd = null, victimsPrior = null;
+  let killedYtd  = null, killedPrior  = null;
+
+  for (let i = 1; i < rows.length; i++) {
+    const cols = parseCSVRow(rows[i]);
+    const rowLabel = cols[0].toLowerCase();
+    const isVictims = rowLabel.includes('shooting victims') || rowLabel.includes('persons hit');
+    const isKilled  = rowLabel.includes('individuals killed') || rowLabel.includes('gun violence');
     if (!isVictims && !isKilled) continue;
 
-    // Find the month and value — check each column for Jan-XX pattern
-    for (let j = 0; j < clean.length; j++) {
-      if (clean[j] === janCurr && j + 1 < clean.length) {
-        const val = parseInt(clean[j + 1]);
-        if (!isNaN(val)) {
-          if (isVictims) victimsJanCurr = val;
-          if (isKilled)  killedJanCurr  = val;
-        }
-      }
-      if (clean[j] === janPrior && j + 1 < clean.length) {
-        const val = parseInt(clean[j + 1]);
-        if (!isNaN(val)) {
-          if (isVictims) victimsJanPrior = val;
-          if (isKilled)  killedJanPrior  = val;
-        }
-      }
-    }
+    const getVal = (colIdx) => {
+      if (colIdx < 0 || colIdx >= cols.length) return null;
+      const v = parseInt(cols[colIdx].replace(/,/g, ''));
+      return isNaN(v) ? null : v;
+    };
+
+    if (isVictims) { victimsYtd = getVal(janCurrCol); victimsPrior = getVal(janPriorCol); }
+    if (isKilled)  { killedYtd  = getVal(janCurrCol); killedPrior  = getVal(janPriorCol); }
   }
 
-  console.log(`Buffalo parsed: victimsJanCurr=${victimsJanCurr} killedJanCurr=${killedJanCurr} victimsJanPrior=${victimsJanPrior} killedJanPrior=${killedJanPrior}`);
+  console.log(`Buffalo parsed: victimsYtd=${victimsYtd} killedYtd=${killedYtd} victimsPrior=${victimsPrior} killedPrior=${killedPrior}`);
 
-  const ytd   = victimsJanCurr + killedJanCurr;
-  const prior = victimsJanPrior + killedJanPrior;
+  if (victimsYtd === null || killedYtd === null) {
+    throw new Error(`Buffalo: could not find Jan values in CSV. Headers: ${headers.join('|')}`);
+  }
 
-  if (ytd === 0 && prior === 0) throw new Error('Buffalo: parsed zeros for both ytd and prior — CSV parse may have failed. Preview: ' + csvText.substring(0, 300));
-
-  return { ytd, prior, asof: `${yr}-01-31` };
+  return {
+    ytd:   victimsYtd + killedYtd,
+    prior: (victimsPrior !== null && killedPrior !== null) ? victimsPrior + killedPrior : null,
+    asof:  `${yr}-01-31`
+  };
 }
 
 
