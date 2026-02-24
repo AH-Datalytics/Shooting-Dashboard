@@ -1163,8 +1163,13 @@ async function fetchPortland() {
   const visionText = claudeData.content?.[0]?.text?.trim() || '';
   console.log('Portland vision response:', visionText);
 
-  const ytdMatch   = visionText.match(new RegExp('YTD' + yr + '=(\d+)'));
-  const priorMatch = visionText.match(new RegExp('YTD' + (yr-1) + '=(\d+)'));
+  // Use split/indexOf to avoid regex escaping issues with dynamic year numbers
+  const ytdTag   = 'YTD' + yr + '=';
+  const priorTag = 'YTD' + (yr-1) + '=';
+  const ytdIdx   = visionText.indexOf(ytdTag);
+  const priorIdx = visionText.indexOf(priorTag);
+  const ytdMatch   = ytdIdx   >= 0 ? visionText.slice(ytdIdx   + ytdTag.length).match(/^(\d+)/)   : null;
+  const priorMatch = priorIdx >= 0 ? visionText.slice(priorIdx + priorTag.length).match(/^(\d+)/) : null;
 
   if (!ytdMatch || !priorMatch) throw new Error('Portland: vision parse failed: ' + visionText);
 
