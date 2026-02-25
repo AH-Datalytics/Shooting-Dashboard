@@ -1036,6 +1036,9 @@ main().catch(e => { console.error(e); process.exit(1); });
 // of the YTD Comparison bar chart and send to vision API.
 
 async function fetchPortland() {
+  // Uses the Gun Violence Trends Report dashboard (YTD & Rolling Year Statistics sheet)
+  // Table has plain DOM text: Homicides by Firearm Incidents + Non-Fatal Injury Shooting Incidents
+  // = Shooting Incidents (matches Portland's definition, excludes No-Injury)
   const { chromium } = require('playwright');
   const browser = await chromium.launch({ headless: true });
   const page    = await browser.newPage();
@@ -1044,192 +1047,94 @@ async function fetchPortland() {
 
   const yr = new Date().getFullYear();
 
-  const embedUrl = 'https://public.tableau.com/views/PortlandShootingIncidentStatistics/ShootingIncidentStatistics?:showVizHome=no&:embed=true&:toolbar=yes';
-  console.log('Portland: loading viz embed with shooting type filter...');
+  const embedUrl = 'https://public.tableau.com/views/GunViolenceTrendsReport/YeartoDateRollingYearStatistics?:showVizHome=no&:embed=true';
+  console.log('Portland: loading Gun Violence Trends Report YTD sheet...');
   await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(12000);
 
-  // Get asof from "Updated: M/D/YYYY" in page text
-  const bodyText0 = await page.evaluate(function() { return document.body.innerText; });
+  // Get asof from date range text like "January 1, 2026 - January 31, 2026"
+  const bodyText = await page.evaluate(function() { return document.body.innerText; });
+  console.log('Portland: body sample:', bodyText.substring(0, 400));
+
+  // Parse asof from "Current Year to Date: January 1, YYYY - Month D, YYYY"
   let asof = null;
-  const updatedMatch = bodyText0.match(/Updated:\s+(\d+)\/(\d+)\/(\d+)/);
-  if (updatedMatch) asof = updatedMatch[3] + '-' + updatedMatch[1].padStart(2,'0') + '-' + updatedMatch[2].padStart(2,'0');
-  console.log('Portland: asof from page:', asof);
+  const asofMatch = bodyText.match(/Current Year to Date:[^|]+\|[^\n]*?([A-Z][a-z]+ \d+, \d{4})/);
+  if (asofMatch) {
+    const d = new Date(asofMatch[1]);
+    if (!isNaN(d)) asof = d.toISOString().slice(0,10);
+  }
+  // Fallback: grab "Updated: M/D/YYYY"
+  if (!asof) {
+    const upd = bodyText.match(/Updated:\s+(\d+)\/(\d+)\/(\d+)/);
+    if (upd) asof = upd[3] + '-' + upd[1].padStart(2,'0') + '-' + upd[2].padStart(2,'0');
+  }
+  console.log('Portland: asof:', asof);
 
-  // Step 1: Clear the date filter (currently set to just January)
-  // "All Values in Database" checkbox should already be visible in the filter panel
-  console.log('Portland: clearing date filter...');
-  try {
-    await page.evaluate(function() {
-      var all = Array.from(document.querySelectorAll('*'));
-      var el = all.find(function(e) { return (e.innerText || e.textContent || '').trim() === 'All Values in Database'; });
-      if (el) el.click(); else throw new Error('not found');
-    });
-    await page.waitForTimeout(4000);
-    console.log('Portland: date filter cleared');
-  } catch(e) {
-    console.log('Portland: date filter clear failed, trying via pill:', e.message.split('\n')[0]);
-    try {
-      await page.evaluate(function() {
-        var all = Array.from(document.querySelectorAll('*'));
-        var el = all.find(function(e) { return (e.innerText || e.textContent || '').trim() === 'Filter Timeline by Date'; });
-        if (el) el.click();
-      });
-      await page.waitForTimeout(2000);
-      await page.evaluate(function() {
-        var all = Array.from(document.querySelectorAll('*'));
-        var el = all.find(function(e) { return (e.innerText || e.textContent || '').trim() === 'All Values in Database'; });
-        if (el) el.click(); else throw new Error('not found after pill open');
-      });
-      await page.waitForTimeout(4000);
-      console.log('Portland: date filter cleared via pill');
-    } catch(e2) {
-      console.log('Portland: date filter fallback failed:', e2.message.split('\n')[0]);
+  // Parse the YTD table - find rows for Homicides by Firearm Incidents and Non-Fatal Injury Shooting Incidents
+  // Table text will contain these labels followed by numbers
+  // "Current YTD Count" is the first number after each label
+  const tableData = await page.evaluate(function(yr) {
+    // Get all text nodes and their values from the viz
+    var text = document.body.innerText;
+    return text;
+  }, yr);
+
+  console.log('Portland: full text length:', tableData.length);
+
+  // Parse the table rows
+  // Expected format in DOM text (from screenshot):
+  // "Homicides by Firearm Incidents	1	2	..."
+  // "Non-Fatal Injury Shooting Incidents	8	11	..."
+  // or whitespace-separated
+
+  // Split into lines and find the rows we need
+  const lines = tableData.split('\n').map(function(l) { return l.trim(); }).filter(Boolean);
+  console.log('Portland: line count:', lines.length);
+
+  // Log lines around key terms
+  const keyTerms = ['Homicide', 'Non-Fatal', 'Firearm', 'Total Shooting', 'YTD Count'];
+  lines.forEach(function(l, i) {
+    if (keyTerms.some(function(k) { return l.includes(k); })) {
+      console.log('Portland line', i + ':', l.substring(0, 120));
     }
-  }
-
-  // Step 2: Click the Shooting Type tabComboBox inside .ParameterControl
-  // We know it has aria-label containing "Shooting Type" and shows "All"
-  // The element is visible in headless but needs coordinate-based click
-  console.log('Portland: setting Shooting Type parameter...');
-
-  let paramSet = false;
-
-  try {
-    // Find the correct combo - the one inside .ParameterControl (not other combos)
-    const comboInfo = await page.evaluate(function() {
-      // Find all tabComboBox elements
-      var combos = Array.from(document.querySelectorAll('.tabComboBox'));
-      return combos.map(function(el) {
-        return {
-          label: el.getAttribute('aria-label'),
-          expanded: el.getAttribute('aria-expanded'),
-          text: el.textContent.trim().substring(0, 100),
-          inParamControl: !!el.closest('.ParameterControl'),
-          rect: (function() { var r = el.getBoundingClientRect(); return {x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height)}; })()
-        };
-      });
-    });
-    console.log('Portland: all combos:', JSON.stringify(comboInfo));
-
-    // Find the one inside ParameterControl
-    const targetCombo = comboInfo.find(function(c) { return c.inParamControl; });
-    if (targetCombo && targetCombo.rect.w > 0) {
-      // Use page.mouse to click at the center of the combo box
-      const cx = targetCombo.rect.x + targetCombo.rect.w / 2;
-      const cy = targetCombo.rect.y + targetCombo.rect.h / 2;
-      console.log('Portland: clicking combo at', cx, cy, 'text:', targetCombo.text.substring(0,50));
-      await page.mouse.click(cx, cy);
-      await page.waitForTimeout(2000);
-
-      // Check aria-expanded and look for popup options
-      const afterState = await page.evaluate(function() {
-        var combo = document.querySelector('.ParameterControl .tabComboBox');
-        var expanded = combo ? combo.getAttribute('aria-expanded') : 'no combo';
-        // Scan for option text anywhere in DOM
-        var opts = [];
-        document.querySelectorAll('*').forEach(function(el) {
-          var t = (el.innerText || '').trim();
-          if ((t === 'No Injury' || t === 'Non-Fatal Injury' || t === 'Homicide') && el.children.length === 0) {
-            opts.push({ tag: el.tagName, cls: el.className.substring(0,60), text: t, rect: (function() { var r = el.getBoundingClientRect(); return {x: Math.round(r.x), y: Math.round(r.y)}; })() });
-          }
-        });
-        return { expanded: expanded, opts: opts };
-      });
-      console.log('Portland: after mouse click:', JSON.stringify(afterState));
-
-      if (afterState.opts.length > 0) {
-        // Click "Non-Fatal Injury" by coordinates
-        var nfi = afterState.opts.find(function(o) { return o.text === 'Non-Fatal Injury'; });
-        var hom = afterState.opts.find(function(o) { return o.text === 'Homicide'; });
-        var target = nfi || hom;
-        if (target) {
-          await page.mouse.click(target.rect.x + 5, target.rect.y + 5);
-          await page.waitForTimeout(3000);
-          paramSet = true;
-          console.log('Portland: clicked option:', target.text);
-        }
-      } else {
-        // Log what's at the top of the body to find popup
-        const bodyBottom = await page.evaluate(function() {
-          var children = Array.from(document.body.children);
-          return children.map(function(el) {
-            return { cls: el.className.substring(0,60), id: el.id, innerText: (el.innerText||'').substring(0,150) };
-          });
-        });
-        console.log('Portland: body children (no opts found):', JSON.stringify(bodyBottom));
-      }
-    } else {
-      console.log('Portland: no visible ParameterControl combo found, comboInfo:', JSON.stringify(comboInfo));
-    }
-  } catch(e) {
-    console.log('Portland: combo interaction failed:', e.message.split('\n')[0]);
-  }
-
-  if (!paramSet) {
-    console.log('Portland: WARNING - parameter not set, screenshot will include all shooting types');
-  }
-
-  // Step 3: Screenshot the YTD Comparison bar chart and send to vision API
-  const screenshotBuf = await page.screenshot({ fullPage: false });
-  await browser.close();
-  console.log('Portland: screenshot taken, size:', screenshotBuf.length, 'bytes');
-
-  const base64Image = screenshotBuf.toString('base64');
-  const promptText = 'This is a Portland Police Bureau Tableau dashboard filtered to show only Homicide and Non-Fatal Injury shooting incidents (No Injury excluded). Find the "Year-to-Date Comparison" bar chart and extract the yearly totals for ' + yr + ' and ' + (yr-1) + '. Reply ONLY in this exact format with no other text: YTD' + yr + '=N YTD' + (yr-1) + '=N';
-
-  const claudeData = await new Promise((resolve, reject) => {
-    const body = JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 256,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64Image } },
-          { type: 'text', text: promptText }
-        ]
-      }]
-    });
-    const req = require('https').request({
-      hostname: 'api.anthropic.com',
-      path: '/v1/messages',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'Content-Length': Buffer.byteLength(body)
-      }
-    }, (res) => {
-      const chunks = [];
-      res.on('data', c => chunks.push(c));
-      res.on('end', () => {
-        try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
-        catch(e) { reject(e); }
-      });
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
   });
 
-  const visionText = claudeData.content?.[0]?.text?.trim() || '';
-  console.log('Portland vision response:', visionText);
+  // Find Homicides by Firearm Incidents current YTD
+  // Find Non-Fatal Injury Shooting Incidents current YTD
+  let homFirearmYtd = null, homFirearmPrior = null;
+  let nfsiYtd = null, nfsiPrior = null;
 
-  // Use split/indexOf to avoid regex escaping issues with dynamic year numbers
-  const ytdTag   = 'YTD' + yr + '=';
-  const priorTag = 'YTD' + (yr-1) + '=';
-  const ytdIdx   = visionText.indexOf(ytdTag);
-  const priorIdx = visionText.indexOf(priorTag);
-  const ytdMatch   = ytdIdx   >= 0 ? visionText.slice(ytdIdx   + ytdTag.length).match(/^(\d+)/)   : null;
-  const priorMatch = priorIdx >= 0 ? visionText.slice(priorIdx + priorTag.length).match(/^(\d+)/) : null;
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i];
+    if (l.includes('Homicides by Firearm Incidents') || l === 'Homicides by Firearm Incidents') {
+      // Numbers may be on the same line (tab-separated) or the next few lines
+      var nums = (l + ' ' + (lines[i+1]||'') + ' ' + (lines[i+2]||'')).match(/\b(\d+)\b/g);
+      if (nums && nums.length >= 2) {
+        homFirearmYtd = parseInt(nums[0]);
+        homFirearmPrior = parseInt(nums[1]);
+        console.log('Portland: HomFirearm YTD=' + homFirearmYtd + ' Prior=' + homFirearmPrior);
+      }
+    }
+    if (l.includes('Non-Fatal Injury Shooting Incidents') || l === 'Non-Fatal Injury Shooting Incidents') {
+      var nums2 = (l + ' ' + (lines[i+1]||'') + ' ' + (lines[i+2]||'')).match(/\b(\d+)\b/g);
+      if (nums2 && nums2.length >= 2) {
+        nfsiYtd = parseInt(nums2[0]);
+        nfsiPrior = parseInt(nums2[1]);
+        console.log('Portland: NFSI YTD=' + nfsiYtd + ' Prior=' + nfsiPrior);
+      }
+    }
+  }
 
-  if (!ytdMatch || !priorMatch) throw new Error('Portland: vision parse failed: ' + visionText);
+  await browser.close();
 
-  const ytd   = parseInt(ytdMatch[1]);
-  const prior = parseInt(priorMatch[1]);
-  console.log('Portland final: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
+  if (homFirearmYtd === null || nfsiYtd === null) {
+    throw new Error('Portland: could not parse table values. homFirearm=' + homFirearmYtd + ' nfsi=' + nfsiYtd);
+  }
 
-  if (ytd === 0 && prior === 0) throw new Error('Portland: vision returned all zeros');
+  const ytd   = homFirearmYtd + nfsiYtd;
+  const prior = homFirearmPrior + nfsiPrior;
+  console.log('Portland final: homFirearm=' + homFirearmYtd + '+' + nfsiYtd + '=' + ytd + ' prior=' + homFirearmPrior + '+' + nfsiPrior + '=' + prior + ' asof=' + asof);
+
+  if (ytd === 0 && prior === 0) throw new Error('Portland: parsed all zeros');
   return { ytd, prior, asof };
 }
