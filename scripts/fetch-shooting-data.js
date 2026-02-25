@@ -1069,7 +1069,7 @@ async function main() {
     safe('Hampton',    fetchHampton,    60000),
     safe('MiamiDade',  fetchMiamiDade,  120000),
     safe('Pittsburgh', fetchPittsburgh, 120000),
-    safe('Portland',   fetchPortland,   240000),
+    safe('Portland',   fetchPortland,   60000),
     safe('Buffalo',    fetchBuffalo,    120000),
     safe('Nashville',  fetchNashville,  180000),
     safe('Hartford',   fetchHartford,   60000),
@@ -1091,145 +1091,68 @@ async function main() {
 main().catch(e => { console.error(e); process.exit(1); });
 
 
-// ─── Portland (Tableau - PPB Shooting Incident Statistics) ───────────────────
-// The YTD chart numbers are rendered as SVG — not accessible via innerText.
-// Strategy: load the viz, clear the date filter so YTD shows all months,
-// deselect "No Injury" from the shooting type filter, then take a screenshot
-// of the YTD Comparison bar chart and send to vision API.
+// ─── Portland (CSV from Tableau Public) ──────────────────────────────────────
+// Direct CSV download of all shooting incidents. Filter out "No Injury" rows,
+// count Homicide + Non-Fatal Injury by year. Fair YTD comparison uses max month
+// available in current year.
 
 async function fetchPortland() {
-  // Uses the Gun Violence Trends Report dashboard (YTD & Rolling Year Statistics sheet)
-  // Table numbers are SVG (not DOM text), so we screenshot + vision API.
-  // We crop just the YTD Statistics table to get clean numbers.
-  // Row order: HomicideVictims, HomFirearmVictims, HomFirearmIncidents, NonFatalInjury, NonInjury, Total
-  // We sum HomFirearmIncidents + NonFatalInjury = Shooting Incidents (Portland definition)
-  const { chromium } = require('playwright');
-  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
-  const page    = await browser.newPage();
-  await page.setViewportSize({ width: 1536, height: 1200 });
-  page.setDefaultTimeout(90000);
+  const csvUrl = 'https://public.tableau.com/views/PPBOpenDataDownloads/Shootings.csv?:showVizHome=no';
+  console.log('Portland: fetching CSV...');
+  const resp = await fetchUrl(csvUrl, 30000);
+  if (resp.status !== 200) throw new Error('Portland: HTTP ' + resp.status);
 
-  const embedUrl = 'https://public.tableau.com/views/GunViolenceTrendsReport/YeartoDateRollingYearStatistics?:showVizHome=no&:embed=true';
-  console.log('Portland: loading Gun Violence Trends Report YTD sheet...');
-  await page.goto(embedUrl, { waitUntil: 'networkidle', timeout: 90000 }).catch(() => {});
+  const text = resp.body.toString('utf8');
+  const lines = text.split('\n');
+  console.log('Portland: CSV lines:', lines.length);
 
-  // Wait for table to render — poll for text content stabilizing
-  let bodyText = '';
-  for (var w = 0; w < 15; w++) {
-    await page.waitForTimeout(4000);
-    bodyText = await page.evaluate(function() { return document.body.innerText; });
-    if (bodyText.includes('Total Shooting Incidents') && bodyText.length > 2000) break;
-    console.log('Portland: waiting for render... attempt', (w+1), 'len:', bodyText.length);
-  }
-  console.log('Portland: body length after wait:', bodyText.length);
-  if (bodyText.length < 3000) {
-    console.log('Portland: body snippet (first 500):', bodyText.substring(0, 500));
+  // Parse header to find column indices
+  const header = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+  const iYear = header.indexOf('Occur Year');
+  const iMonth = header.indexOf('Occur Month');
+  const iType = header.indexOf('Shooting Type');
+  console.log('Portland: columns - Year:', iYear, 'Month:', iMonth, 'Type:', iType);
+
+  if (iYear < 0 || iMonth < 0 || iType < 0) {
+    throw new Error('Portland: CSV columns not found. Header: ' + header.join(', '));
   }
 
-  // Parse asof from "Current Year to Date: January 1, YYYY - Month D, YYYY"
+  const yr = new Date().getFullYear();
+
+  // Parse all non-"No Injury" rows
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const cols = lines[i].split(',').map(c => c.trim().replace(/"/g, ''));
+    const type = cols[iType];
+    if (type === 'No Injury') continue;
+    const year = parseInt(cols[iYear]);
+    const month = parseInt(cols[iMonth]);
+    if (!year || !month) continue;
+    rows.push({ year, month });
+  }
+  console.log('Portland: qualifying rows (excl No Injury):', rows.length);
+
+  // Find max month in current year for fair comparison
+  let maxMonth = 0;
+  rows.forEach(r => { if (r.year === yr && r.month > maxMonth) maxMonth = r.month; });
+  console.log('Portland: max month in ' + yr + ':', maxMonth);
+
+  // Count YTD and prior, only up to maxMonth
+  let ytd = 0, prior = 0;
+  rows.forEach(r => {
+    if (r.month > maxMonth) return;
+    if (r.year === yr) ytd++;
+    if (r.year === yr - 1) prior++;
+  });
+
+  // Derive asof as last day of maxMonth in current year
   let asof = null;
-  // Date range appears as "January 1, 2026 - January 31, 2026" or with | separator
-  // We want the END date (second date = last day of coverage)
-  const asofMatch = bodyText.match(/Current Year to Date:[^\n]*?([A-Z][a-z]+ \d+, \d{4})\s*[-|]\s*([A-Z][a-z]+ \d+, \d{4})/);
-  if (asofMatch) {
-    const d = new Date(asofMatch[2]); // end date
-    if (!isNaN(d)) asof = d.toISOString().slice(0,10);
-  }
-  if (!asof) {
-    // Fallback: grab any date-like string near "to Date"
-    const m2 = bodyText.match(/([A-Z][a-z]+ \d+, \d{4})\s*[-|]\s*([A-Z][a-z]+ \d+, \d{4})/);
-    if (m2) { const d = new Date(m2[2]); if (!isNaN(d)) asof = d.toISOString().slice(0,10); }
-  }
-  if (!asof) {
-    const upd = bodyText.match(/Updated:\s*(\d+)\/(\d+)\/(\d+)/);
-    if (upd) asof = upd[3] + '-' + upd[1].padStart(2,'0') + '-' + upd[2].padStart(2,'0');
-  }
-  console.log('Portland: asof:', asof);
-
-  // Extra wait to ensure SVG numbers have painted before screenshotting
-  await page.waitForTimeout(5000);
-
-  // Screenshot the full page for vision API
-  const screenshotBuf = await page.screenshot({ fullPage: false });
-  await browser.close();
-  console.log('Portland: screenshot taken, size:', screenshotBuf.length, 'bytes');
-
-  const base64Image = screenshotBuf.toString('base64');
-  const promptText = [
-    'This is a Portland Police Bureau "Gun Violence Trends Report" Tableau dashboard showing the Year to Date Statistics table.',
-    'The table has these rows: Homicide Victims, Homicides by Firearm Victims, Homicides by Firearm Incidents, Non-Fatal Injury Shooting Incidents, Non-Injury Shooting Incidents, Total Shooting Incidents.',
-    'Columns include: Current YTD Count, Previous YTD Count.',
-    'There should also be a date range shown (e.g. "January 1, 2026 - February 15, 2026" or similar). Extract the END date of that range.',
-    'Extract these values:',
-    '  - "Homicides by Firearm Incidents" Current YTD Count → HOM',
-    '  - "Non-Fatal Injury Shooting Incidents" Current YTD Count → NFSI',
-    '  - "Homicides by Firearm Incidents" Previous YTD Count → HOM_PRIOR',
-    '  - "Non-Fatal Injury Shooting Incidents" Previous YTD Count → NFSI_PRIOR',
-    '  - The END date of the current YTD date range in YYYY-MM-DD format → ASOF',
-    'Reply ONLY in this exact format with no other text: HOM=N NFSI=N HOM_PRIOR=N NFSI_PRIOR=N ASOF=YYYY-MM-DD',
-    'If you cannot find the date range, omit ASOF entirely.'
-  ].join(' ');
-
-  async function callVision(imgB64) {
-    const body = JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 128,
-      messages: [{ role: 'user', content: [
-        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: imgB64 } },
-        { type: 'text', text: promptText }
-      ]}]
-    });
-    const resp = await new Promise((resolve, reject) => {
-      const req = require('https').request({
-        hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY,
-                   'anthropic-version': '2023-06-01', 'Content-Length': Buffer.byteLength(body) }
-      }, (res) => {
-        const chunks = []; res.on('data', c => chunks.push(c));
-        res.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString())); } catch(e) { reject(e); } });
-      });
-      req.on('error', reject); req.write(body); req.end();
-    });
-    return (resp.content?.[0]?.text || '').trim();
+  if (maxMonth > 0) {
+    const lastDay = new Date(yr, maxMonth, 0).getDate();
+    asof = yr + '-' + String(maxMonth).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
   }
 
-  let visionText = await callVision(base64Image);
-  console.log('Portland vision response:', visionText);
-  // Retry up to 3 times if response is empty or unparseable
-  for (let retry = 1; retry <= 3 && !visionText.includes('HOM='); retry++) {
-    console.log('Portland: retrying vision call attempt ' + retry + '...');
-    await new Promise(r => setTimeout(r, 3000));
-    visionText = await callVision(base64Image);
-    console.log('Portland vision retry ' + retry + ' response:', visionText);
-  }
-
-  function extractVal(text, key) {
-    var idx = text.indexOf(key + '=');
-    if (idx < 0) return null;
-    var m = text.slice(idx + key.length + 1).match(/^(\d+)/);
-    return m ? parseInt(m[1]) : null;
-  }
-
-  const homYtd   = extractVal(visionText, 'HOM');
-  const nfsiYtd  = extractVal(visionText, 'NFSI');
-  const homPrior = extractVal(visionText, 'HOM_PRIOR');
-  const nfsiPrior = extractVal(visionText, 'NFSI_PRIOR');
-
-  console.log('Portland: hom=' + homYtd + ' nfsi=' + nfsiYtd + ' hom_prior=' + homPrior + ' nfsi_prior=' + nfsiPrior);
-
-  // Extract ASOF date from vision response if DOM parsing failed
-  if (!asof) {
-    const asofMatch = visionText.match(/ASOF=(\d{4}-\d{2}-\d{2})/);
-    if (asofMatch) asof = asofMatch[1];
-    console.log('Portland: asof from vision:', asof);
-  }
-
-  if (homYtd === null || nfsiYtd === null || homPrior === null || nfsiPrior === null) {
-    throw new Error('Portland: vision parse failed: ' + visionText);
-  }
-
-  const ytd   = homYtd + nfsiYtd;
-  const prior = homPrior + nfsiPrior;
   console.log('Portland final: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
   if (ytd === 0 && prior === 0) throw new Error('Portland: parsed all zeros');
   return { ytd, prior, asof };
@@ -1405,16 +1328,15 @@ async function fetchPortsmouth() {
 
   const promptText = [
     'This is a bar chart titled "GSW Victims – Injuries/Death & Rate (YTD)" from Portsmouth Police.',
-    'It shows grouped bars for each year. For each year there are numbers displayed above/on each bar:',
-    '  - A dashed orange number at the very top = Total Gunshot Victims',
-    '  - A yellow bar with a number = Non-Fatal victims',
-    '  - A red bar with a number = Fatal (Non-Suicide) victims', 
-    '  - A small purple bar with a number = Fatal (Suicide) victims',
-    'Read the numbers for the two rightmost years: ' + yr + ' and ' + (yr-1) + '.',
-    'For EACH year, tell me the Non-Fatal (yellow) number and the Fatal Non-Suicide (red) number.',
+    'Each year has a group of bars. Above each group is a TOTAL number shown with a dashed orange line.',
+    'There is also a small purple bar at the bottom of each group labeled "Fatal (Suicide)" with a small number.',
+    '',
+    'For the two RIGHTMOST year groups (' + yr + ' and ' + (yr-1) + '), read:',
+    '1. The TOTAL number shown at the very top (dashed orange line) - this is the largest/highest number for each year',
+    '2. The purple Fatal (Suicide) number - this is usually the smallest number, at the bottom',
+    '',
     'Reply ONLY in this exact format:',
-    yr + '_NONFATAL=N ' + yr + '_FATAL=N ' + (yr-1) + '_NONFATAL=N ' + (yr-1) + '_FATAL=N',
-    'Read carefully - the red numbers can be small and hard to see against the dark background.'
+    yr + '_TOTAL=N ' + yr + '_SUICIDE=N ' + (yr-1) + '_TOTAL=N ' + (yr-1) + '_SUICIDE=N'
   ].join('\n');
 
   const body = JSON.stringify({
@@ -1442,7 +1364,7 @@ async function fetchPortsmouth() {
   console.log('Portsmouth vision response:', visionText);
 
   // Retry if empty
-  for (let retry = 1; retry <= 2 && !visionText.includes('NONFATAL='); retry++) {
+  for (let retry = 1; retry <= 2 && !visionText.includes('TOTAL='); retry++) {
     console.log('Portsmouth: retrying vision call attempt ' + retry + '...');
     await new Promise(r => setTimeout(r, 3000));
     const resp2 = await new Promise((resolve, reject) => {
@@ -1460,16 +1382,17 @@ async function fetchPortsmouth() {
     console.log('Portsmouth vision retry ' + retry + ' response:', visionText);
   }
 
-  const ytdNF = visionText.match(new RegExp(yr + '_NONFATAL=(\\d+)'));
-  const ytdF  = visionText.match(new RegExp(yr + '_FATAL=(\\d+)'));
-  const prNF  = visionText.match(new RegExp((yr-1) + '_NONFATAL=(\\d+)'));
-  const prF   = visionText.match(new RegExp((yr-1) + '_FATAL=(\\d+)'));
+  const ytdTotal = visionText.match(new RegExp(yr + '_TOTAL=(\\d+)'));
+  const ytdSui   = visionText.match(new RegExp(yr + '_SUICIDE=(\\d+)'));
+  const prTotal  = visionText.match(new RegExp((yr-1) + '_TOTAL=(\\d+)'));
+  const prSui    = visionText.match(new RegExp((yr-1) + '_SUICIDE=(\\d+)'));
 
-  console.log('Portsmouth parsed: ' + yr + ' NF=' + (ytdNF?.[1]||'?') + ' F=' + (ytdF?.[1]||'?') +
-    ' | ' + (yr-1) + ' NF=' + (prNF?.[1]||'?') + ' F=' + (prF?.[1]||'?'));
+  console.log('Portsmouth parsed: ' + yr + ' T=' + (ytdTotal?.[1]||'?') + ' S=' + (ytdSui?.[1]||'?') +
+    ' | ' + (yr-1) + ' T=' + (prTotal?.[1]||'?') + ' S=' + (prSui?.[1]||'?'));
 
-  const ytd = (ytdNF && ytdF) ? parseInt(ytdNF[1]) + parseInt(ytdF[1]) : null;
-  const prior = (prNF && prF) ? parseInt(prNF[1]) + parseInt(prF[1]) : null;
+  // YTD = Total minus Suicide
+  const ytd = (ytdTotal && ytdSui) ? parseInt(ytdTotal[1]) - parseInt(ytdSui[1]) : null;
+  const prior = (prTotal && prSui) ? parseInt(prTotal[1]) - parseInt(prSui[1]) : null;
 
   console.log('Portsmouth final: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
   if (ytd === null || prior === null) throw new Error('Portsmouth: vision parse failed: ' + visionText);
