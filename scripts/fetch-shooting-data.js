@@ -369,29 +369,77 @@ async function fetchMemphis() {
   await page.locator('text=Non-Fatal').first().click();
   await page.waitForTimeout(6000); // extra wait for chart to render
 
-  // Read chart - shows "2026: 69" and "2025: 92 (-25%)"
+  // Read chart text + take screenshot for vision fallback
   const chartText = await page.evaluate(() => document.body.innerText);
-  console.log('Memphis chart sample:', chartText.substring(0, 600));
+  console.log('Memphis chart sample:', chartText.substring(0, 800));
+  const screenshotBuf = await page.screenshot({ fullPage: false });
+  console.log('Memphis: screenshot taken, size:', screenshotBuf.length, 'bytes');
 
   await browser.close();
 
   const yr = new Date().getFullYear();
 
-  // Chart title shows "2026: 69" and "2025: 92 (-25%)" - parse directly from title
-  // Title is '2026: 692025: 92 (-25%)' - match both years in one pass
-  const bothMatch = chartText.match(new RegExp(yr + ':\\s*(\\d+)' + (yr-1) + ':\\s*(\\d+)'));
-  const ytdMatch   = bothMatch ? {1: bothMatch[1]} : null;
-  const priorMatch = bothMatch ? {1: bothMatch[2]} : null;
+  // Power BI renders the Non-Fatal Shooting bar chart with a title area showing
+  // "2026: 70" and "2025: 97 (-27.84%)" — but this may be SVG text not in innerText.
+  // The "Year To Date" section lists years and values separately but values are NOT
+  // in year order (they follow DOM render order, not chronological).
+  // Strategy priority: title text → vision API fallback.
+  let ytd = null, prior = null;
 
-  console.log('Memphis ytdMatch:', ytdMatch && ytdMatch[0], 'priorMatch:', priorMatch && priorMatch[0]);
+  // Strategy 1: Chart title "2026: 70" and "2025: 97 (-27.84%)" as separate matches
+  var ytdMatch = chartText.match(new RegExp(yr + ':\\s*(\\d+)'));
+  var priorMatch = chartText.match(new RegExp((yr-1) + ':\\s*(\\d+)'));
+  if (ytdMatch) {
+    ytd = parseInt(ytdMatch[1]);
+    console.log('Memphis: found YTD from title: ' + yr + ': ' + ytd);
+  }
+  if (priorMatch) {
+    prior = parseInt(priorMatch[1]);
+    console.log('Memphis: found prior from title: ' + (yr-1) + ': ' + prior);
+  }
 
-  if (!ytdMatch) throw new Error('Could not find ' + yr + ': N in chart text. Sample: ' + chartText.substring(0, 400));
+  // Strategy 2 (fallback): Screenshot + Vision API
+  // The chart is a simple bar chart with values above each bar and years on x-axis.
+  if (ytd === null) {
+    console.log('Memphis: text parsing failed, using vision API...');
+    const base64Image = screenshotBuf.toString('base64');
+    const claudeData = await new Promise((resolve, reject) => {
+      const body = JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 64,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64Image } },
+            { type: 'text', text: 'This is a Memphis Non-Fatal Shooting Incidents bar chart. The chart title area shows "YEAR: COUNT" for the current and prior year. What are the two values? Reply ONLY in this format: YTD=N PRIOR=N (where YTD is the current/latest year count and PRIOR is the previous year count)' }
+          ]
+        }]
+      });
+      const req = require('https').request({
+        hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY,
+                   'anthropic-version': '2023-06-01', 'Content-Length': Buffer.byteLength(body) }
+      }, (res) => {
+        const chunks = []; res.on('data', c => chunks.push(c));
+        res.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString())); } catch(e) { reject(e); } });
+      });
+      req.on('error', reject); req.write(body); req.end();
+    });
 
-  return {
-    ytd:   parseInt(ytdMatch[1]),
-    prior: priorMatch ? parseInt(priorMatch[1]) : null,
-    asof
-  };
+    const visionText = (claudeData.content?.[0]?.text || '').trim();
+    console.log('Memphis vision response:', visionText);
+
+    var vYtd = visionText.match(/YTD=(\d+)/);
+    var vPrior = visionText.match(/PRIOR=(\d+)/);
+    if (vYtd) ytd = parseInt(vYtd[1]);
+    if (vPrior) prior = parseInt(vPrior[1]);
+  }
+
+  console.log('Memphis parsed: ytd=' + ytd + ' prior=' + prior);
+
+  if (ytd === null) throw new Error('Could not find ' + yr + ' Non-Fatal Shooting value. Chart text sample: ' + chartText.substring(0, 800));
+
+  return { ytd, prior, asof };
 }
 
 // ─── Hampton (JPEG image) ─────────────────────────────────────────────────────
