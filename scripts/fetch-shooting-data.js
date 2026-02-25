@@ -1172,6 +1172,7 @@ async function main() {
     safe('Portland',   fetchPortland,   240000),
     safe('Buffalo',    fetchBuffalo,    120000),
     safe('Nashville',  fetchNashville,  180000),
+    safe('Hartford',   fetchHartford,   60000),
     // Wilmington removed — Akamai blocks all automated access; manual entry only
   ]);
 
@@ -1321,6 +1322,102 @@ async function fetchPortland() {
   console.log('Portland final: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
   if (ytd === 0 && prior === 0) throw new Error('Portland: parsed all zeros');
   return { ytd, prior, asof };
+}
+
+
+// ─── Hartford (CompStat PDF) ─────────────────────────────────────────────────
+// Weekly CompStat report, published with predictable URL based on week-ending Saturday.
+// URL pattern: https://www.hartfordct.gov/files/assets/public/v/1/police/police-documents/compstat/{YYYY}/{MM}/we-{MM}-{DD}-{YY}.pdf
+// Page 2: Citywide table with "Murder Victims" and "Non_Fatal Shooting Victims" under YTD columns.
+
+async function fetchHartford() {
+  // Generate week-ending Saturday dates to try (most recent first)
+  function getWeekEndingSaturdays() {
+    const dates = [];
+    const now = new Date();
+    for (let i = 0; i < 8; i++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - d.getDay() - 1 - (7 * i)); // Previous Saturday
+      dates.push(d);
+    }
+    return dates;
+  }
+
+  function buildUrl(d) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const yy = String(yyyy).slice(-2);
+    return `https://www.hartfordct.gov/files/assets/public/v/1/police/police-documents/compstat/${yyyy}/${mm}/we-${mm}-${dd}-${yy}.pdf`;
+  }
+
+  function fmtDate(d) {
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  }
+
+  // Try downloading recent PDFs
+  const saturdays = getWeekEndingSaturdays();
+  let pdfBuffer = null;
+  let asof = null;
+
+  for (const d of saturdays) {
+    const url = buildUrl(d);
+    console.log('Hartford: trying', url);
+    try {
+      const resp = await fetchUrl(url, 20000);
+      if (resp.status === 200 && resp.body.length > 10000 && resp.body[0] === 0x25) {
+        pdfBuffer = resp.body;
+        asof = fmtDate(d);
+        console.log('Hartford: downloaded PDF for', asof, '(' + (resp.body.length / 1024).toFixed(0) + ' KB)');
+        break;
+      }
+    } catch(e) { /* try next */ }
+  }
+
+  if (!pdfBuffer) throw new Error('Hartford: could not download any recent CompStat PDF');
+
+  // Extract tokens from page 2 (Citywide table)
+  const tokens = await extractPdfTokens(pdfBuffer, 2);
+  const joined = tokens.join(' ');
+
+  // Parse a Victim Counts row by label
+  // Each row has 13 values after the label:
+  // CW2026 CW2025 CW+/- PW2026 PW+/- 28D2026 28D2025 28D+/- YTD2026 YTD2025 YTD+/- 2Y2024 2Y+/-
+  function parseVictimRow(label) {
+    var idx = joined.indexOf(label);
+    if (idx === -1) return { ytd2026: 0, ytd2025: 0 };
+    var afterLabel = joined.substring(idx + label.length).trim();
+    var vals = afterLabel.split(/\s+/).slice(0, 13);
+    function parseVal(s) {
+      if (!s || s === '-') return 0;
+      var n = parseInt(s.replace(/,/g, ''));
+      return isNaN(n) ? 0 : n;
+    }
+    return { ytd2026: parseVal(vals[8]), ytd2025: parseVal(vals[9]) };
+  }
+
+  var murder = parseVictimRow('Murder Victims');
+  var nonfatal = parseVictimRow('Non_Fatal Shooting Victims');
+
+  console.log('Hartford: murder YTD=' + murder.ytd2026 + ' prior=' + murder.ytd2025);
+  console.log('Hartford: non-fatal YTD=' + nonfatal.ytd2026 + ' prior=' + nonfatal.ytd2025);
+
+  var ytd = murder.ytd2026 + nonfatal.ytd2026;
+  var prior = murder.ytd2025 + nonfatal.ytd2025;
+
+  if (ytd === 0 && prior === 0) {
+    throw new Error('Hartford: parsed all zeros - check PDF format. Tokens near Victim: ' + joined.substring(joined.indexOf('Victim'), joined.indexOf('Victim') + 200));
+  }
+
+  // Try to get as-of from PDF text (more reliable than URL date)
+  var ytdMatch = joined.match(/Year\s+to\s+Date.*?to\s+(\w+)\s+(\d{1,2}),?\s+(\d{4})/i);
+  if (ytdMatch) {
+    var months = {jan:1,january:1,feb:2,february:2,mar:3,march:3,apr:4,april:4,may:5,jun:6,june:6,jul:7,july:7,aug:8,august:8,sep:9,september:9,oct:10,october:10,nov:11,november:11,dec:12,december:12};
+    var mo = months[ytdMatch[1].toLowerCase()];
+    if (mo) asof = ytdMatch[3] + '-' + String(mo).padStart(2,'0') + '-' + String(parseInt(ytdMatch[2])).padStart(2,'0');
+  }
+
+  return { ytd: ytd, prior: prior, asof: asof };
 }
 
 
