@@ -1073,7 +1073,6 @@ async function main() {
     safe('Buffalo',    fetchBuffalo,    120000),
     safe('Nashville',  fetchNashville,  180000),
     safe('Hartford',   fetchHartford,   60000),
-    // Decatur removed — PowerDMS renders PDF inline; no download event fires
   ]);
 
   for (const { key, value } of fetches) {
