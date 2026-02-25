@@ -2,7 +2,7 @@ name: Fetch Shooting Data
 
 on:
   schedule:
-    - cron: '0 2 * * *'   # Daily at 2am UTC
+    - cron: '0 2,14 * * *'   # Every 12 hours at 2am and 2pm UTC
   workflow_dispatch:       # Manual trigger from Actions tab
 
 jobs:
