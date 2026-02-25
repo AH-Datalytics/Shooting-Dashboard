@@ -1089,86 +1089,73 @@ async function fetchPortland() {
   }
 
   // Step 2: Click the tabComboBox span to open the Dojo popup, then select the right option
-  // The widget is a <span role="button" class="tabComboBox ..."> inside .PCContent
-  // When clicked, Dojo renders a popup (likely appended to document.body) with the options
+  // Use Playwright's native click (not page.evaluate) for proper mouse events
   console.log('Portland: setting Shooting Type parameter...');
 
   let paramSet = false;
 
   try {
-    // Click the tabComboBox span (the "All" dropdown button)
-    const comboClicked = await page.evaluate(function() {
-      var combo = document.querySelector('.tabComboBox');
-      if (!combo) return 'not found';
-      combo.click();
-      return 'clicked: ' + combo.getAttribute('aria-label');
-    });
-    console.log('Portland: combo click result:', comboClicked);
-    await page.waitForTimeout(2000);
+    // Use Playwright locator to click the combo box - this fires proper mouse events
+    const comboLocator = page.locator('.tabComboBox').first();
+    const comboCount = await comboLocator.count();
+    console.log('Portland: tabComboBox count:', comboCount);
 
-    // After click, scan entire document body for popup with shooting type options
-    const popupInfo = await page.evaluate(function() {
-      // Look for any element containing shooting type text
-      var allText = [];
-      document.querySelectorAll('*').forEach(function(el) {
-        var t = (el.innerText || el.textContent || '').trim();
-        if (t === 'No Injury' || t === 'Non-Fatal Injury' || t === 'Homicide') {
-          allText.push({ tag: el.tagName, cls: el.className, text: t, visible: el.offsetParent !== null });
-        }
+    if (comboCount > 0) {
+      // Get current value and aria-label before click
+      const beforeInfo = await comboLocator.evaluate(function(el) {
+        return { label: el.getAttribute('aria-label'), expanded: el.getAttribute('aria-expanded'), text: el.textContent.trim().substring(0,100) };
       });
-      // Also grab any new popup-like container
-      var popup = document.querySelector('[class*="dijitPopup"], [class*="dijitComboDropDown"], [class*="tableau-popup"], [class*="tabComboBoxMenu"], [id*="Popup"]');
-      var popupHTML = popup ? popup.outerHTML.substring(0, 1000) : null;
-      return { matchingEls: allText, popupHTML: popupHTML, bodyChildCount: document.body.children.length };
-    });
-    console.log('Portland: popup info after combo click:', JSON.stringify(popupInfo));
+      console.log('Portland: combo before click:', JSON.stringify(beforeInfo));
 
-    // If we found shooting type options, click "Non-Fatal Injury"
-    if (popupInfo.matchingEls.length > 0) {
-      const clicked = await page.evaluate(function() {
-        var allEls = Array.from(document.querySelectorAll('*'));
-        var el = allEls.find(function(e) {
-          return (e.innerText || e.textContent || '').trim() === 'Non-Fatal Injury';
-        });
-        if (el) { el.click(); return 'clicked Non-Fatal Injury'; }
-        // Try Homicide as fallback
-        el = allEls.find(function(e) {
-          return (e.innerText || e.textContent || '').trim() === 'Homicide';
-        });
-        if (el) { el.click(); return 'clicked Homicide'; }
-        return 'option not found';
+      await comboLocator.click();
+      await page.waitForTimeout(2000);
+
+      // Check if aria-expanded changed
+      const afterExpanded = await comboLocator.evaluate(function(el) {
+        return el.getAttribute('aria-expanded');
       });
-      console.log('Portland: option click result:', clicked);
-      if (clicked.startsWith('clicked')) {
-        await page.waitForTimeout(4000);
+      console.log('Portland: aria-expanded after click:', afterExpanded);
+
+      // Scan ALL body children including new ones for popup
+      const scanResult = await page.evaluate(function() {
+        var results = { bodyCount: document.body.children.length, shootingEls: [], allBodyClasses: [] };
+        // Scan all elements
+        document.querySelectorAll('*').forEach(function(el) {
+          var t = (el.innerText || '').trim();
+          if (t === 'No Injury' || t === 'Non-Fatal Injury' || t === 'Homicide' || t === 'All') {
+            results.shootingEls.push({ tag: el.tagName, cls: el.className.substring(0,80), text: t });
+          }
+        });
+        // Log all body-level children classes
+        Array.from(document.body.children).forEach(function(el) {
+          results.allBodyClasses.push(el.className || el.id || el.tagName);
+        });
+        return results;
+      });
+      console.log('Portland: scan after click:', JSON.stringify(scanResult));
+
+      // Try to find and click "Non-Fatal Injury" option
+      const nfiCount = await page.locator('text=Non-Fatal Injury').count();
+      const homCount = await page.locator('text=Homicide').count();
+      const noInjCount = await page.locator('text=No Injury').count();
+      console.log('Portland: option counts - NF:', nfiCount, 'Hom:', homCount, 'NoInj:', noInjCount);
+
+      if (nfiCount > 0) {
+        await page.locator('text=Non-Fatal Injury').first().click();
+        await page.waitForTimeout(3000);
+        const newVal = await page.locator('.tabComboBoxName').first().textContent().catch(function() { return 'err'; });
+        console.log('Portland: combo value after NF select:', newVal);
         paramSet = true;
-
-        // Also need to click "Non-Fatal Injury" again OR find Apply/OK button if multi-select
-        // First check what the combo shows now
-        const currentVal = await page.evaluate(function() {
-          var combo = document.querySelector('.tabComboBoxName');
-          return combo ? combo.textContent : 'not found';
-        });
-        console.log('Portland: combo value after selection:', currentVal);
-
-        // If still showing "All" or combo is still open, try clicking apply or pressing Enter
-        if (currentVal === 'All' || currentVal === 'not found') {
-          await page.keyboard.press('Escape');
-          await page.waitForTimeout(1000);
-        }
+      } else if (noInjCount > 0) {
+        // Try clicking "No Injury" to toggle it off if it's a checklist
+        await page.locator('text=No Injury').first().click();
+        await page.waitForTimeout(3000);
+        paramSet = true;
+        console.log('Portland: clicked No Injury to deselect');
       }
-    } else {
-      // Log the body-level popups that appeared
-      const bodyInfo = await page.evaluate(function() {
-        var bodyChildren = Array.from(document.body.children);
-        return bodyChildren.slice(-5).map(function(el) {
-          return { cls: el.className, id: el.id, text: (el.innerText||el.textContent||'').substring(0,200) };
-        });
-      });
-      console.log('Portland: body children after click:', JSON.stringify(bodyInfo));
     }
   } catch(e) {
-    console.log('Portland: combo click failed:', e.message.split('\n')[0]);
+    console.log('Portland: combo interaction failed:', e.message.split('\n')[0]);
   }
 
   if (!paramSet) {
