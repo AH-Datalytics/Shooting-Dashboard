@@ -1258,119 +1258,89 @@ async function fetchPortland() {
 // Full dataset → count by year client-side.
 
 async function fetchNashville() {
-  // Strategy: use the Tableau "Last N months" filter to build monthly totals.
-  // Fetching "Last N months" gives a cumulative count from that month back.
-  // Subtracting consecutive values isolates each individual month.
-  // This lets us compute true YTD for both current and prior year.
+  // The viz is a dot map — no bar chart. The only number visible is the total
+  // in the page title: "Gunshot Injuries: M/D/YYYY - M/D/YYYY" and the count
+  // shown as "Fatal: N  Non-Fatal: N" or in the summary CSV (All=N).
   //
-  // The filter dropdown is on the GunshotInjuries view.
-  // We set it via Playwright by clicking the "Offense Report Date" dropdown,
-  // then selecting "Months" tab, entering N in the "Last N months" spinner,
-  // then reading the displayed count from the title "Gunshot Injuries: M/D/YYYY - M/D/YYYY"
-  // and the map dot count (or the summary CSV which gives "All=N").
-  //
-  // Simpler: the GunshotInjuries.csv endpoint respects filter URL params when
-  // the session is fresh. We load the page once, then hit the CSV endpoint
-  // with a date range param for each month window.
-  //
-  // Actually simplest: load the viz, use page.request to hit the CSV endpoint
-  // with different "Offense Report Date" range params in the URL.
-  // Tableau date filter URL syntax: ?Offense+Report+Date=01%2F01%2F2025-01%2F31%2F2025
+  // Strategy: for each month we need, load the viz with a specific date range
+  // in the URL filter param, then read the count from the summary CSV endpoint
+  // (which we know returns 200 with All=N format).
+  // URL filter: ?Offense+Report+Date=01%2F01%2F2026-01%2F31%2F2026
 
   const now = new Date();
   const curYr = now.getFullYear();
   const priorYr = curYr - 1;
-  const curMo = now.getMonth() + 1; // 1-based
+  const curMo = now.getMonth() + 1;
+  const completedThrough = curMo - 1;
 
-  // Launch browser once to get session
   const { chromium } = require('playwright');
   const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage();
   page.setDefaultTimeout(60000);
 
-  const baseUrl = 'https://policepublicdata.nashville.gov/t/Police/views/GunshotInjury/GunshotInjuries?:embed=y&:showVizHome=no';
-  console.log('Nashville: loading viz for session...');
-  await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.waitForTimeout(5000);
-  const cookies = await page.context().cookies();
-  const cookieHeader = cookies.map(c => c.name + '=' + c.value).join('; ');
-  console.log('Nashville: got', cookies.length, 'cookies');
+  const baseUrl = 'https://policepublicdata.nashville.gov/t/Police/views/GunshotInjury/GunshotInjuries';
 
-  // Fetch CSV for a specific month range
-  async function fetchMonthCount(year, month) {
+  // For each month, load the viz with that month's date range and read the title count
+  async function getMonthCount(year, month) {
     const pad = n => String(n).padStart(2, '0');
     const daysInMonth = new Date(year, month, 0).getDate();
     const dateParam = pad(month) + '%2F01%2F' + year + '-' + pad(month) + '%2F' + daysInMonth + '%2F' + year;
-    const path = '/t/Police/views/GunshotInjury/GunshotInjuries.csv?:embed=y&:showVizHome=no&Offense+Report+Date=' + dateParam;
-    const resp = await new Promise((resolve, reject) => {
-      const req = require('https').request({
-        hostname: 'policepublicdata.nashville.gov',
-        path,
-        method: 'GET',
-        headers: {
-          'Cookie': cookieHeader,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Accept': 'text/csv,text/plain,*/*',
-          'Referer': baseUrl,
-        }
-      }, (res) => {
-        const chunks = [];
-        res.on('data', c => chunks.push(c));
-        res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
-        res.on('error', reject);
-      });
-      req.on('error', reject);
-      req.end();
-    });
-    if (resp.status !== 200) return null;
-    const csv = resp.body.toString('utf8');
-    // Format: fatal_nonfatal,Measure Names,Count
-    // All,No Measure Value,N
+    const url = baseUrl + '?:embed=y&:showVizHome=no&Offense+Report+Date=' + dateParam;
+
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(4000);
+
+    // The title shows "Gunshot Injuries: M/D/YYYY - M/D/YYYY" and Fatal/Non-Fatal counts
+    // Read page text to find the counts
+    const bodyText = await page.evaluate(() => document.body.innerText);
+
+    // Look for "Fatal\nN\nNon-Fatal\nN" or similar patterns
+    const fatalMatch = bodyText.match(/Fatal[^\d]*(\d+)[^\d]*Non-Fatal[^\d]*(\d+)/);
+    if (fatalMatch) {
+      const total = parseInt(fatalMatch[1]) + parseInt(fatalMatch[2]);
+      console.log('Nashville: ' + year + '-' + pad(month) + ' fatal=' + fatalMatch[1] + ' nonfatal=' + fatalMatch[2] + ' total=' + total);
+      return total;
+    }
+
+    // Fallback: hit the CSV endpoint with the same date filter using page.request (shares session/cookies)
+    const csvPath = '/t/Police/views/GunshotInjury/GunshotInjuries.csv?:embed=y&:showVizHome=no&Offense+Report+Date=' + dateParam;
+    const csvResp = await page.request.get('https://policepublicdata.nashville.gov' + csvPath);
+    const csv = await csvResp.text();
     const allMatch = csv.match(/^All,.*?,(\d+)/m);
-    if (allMatch) return parseInt(allMatch[1]);
+    if (allMatch) {
+      console.log('Nashville: ' + year + '-' + pad(month) + ' = ' + allMatch[1] + ' (from CSV)');
+      return parseInt(allMatch[1]);
+    }
+
+    console.log('Nashville: ' + year + '-' + pad(month) + ' = null (could not parse). Body snippet: ' + bodyText.substring(0, 200));
     return null;
   }
 
-  // Fetch completed months + current partial: Jan 2025 through current month 2026
-  const monthCounts = {}; // key: "YYYY-MM"
-  const monthsToFetch = [];
-  for (let m = 1; m <= 12; m++) monthsToFetch.push([priorYr, m]);
-  for (let m = 1; m <= curMo; m++) monthsToFetch.push([curYr, m]); // includes current partial month
-
-  console.log('Nashville: fetching', monthsToFetch.length, 'monthly CSVs...');
-  for (const [yr, mo] of monthsToFetch) {
-    const count = await fetchMonthCount(yr, mo);
-    const key = yr + '-' + String(mo).padStart(2, '0');
-    monthCounts[key] = count;
-    console.log('Nashville: ' + key + ' = ' + count);
+  const monthCounts = {};
+  // Fetch all of prior year + completed months of current year
+  for (let m = 1; m <= 12; m++) {
+    const key = priorYr + '-' + String(m).padStart(2, '0');
+    monthCounts[key] = await getMonthCount(priorYr, m);
+  }
+  for (let m = 1; m <= completedThrough; m++) {
+    const key = curYr + '-' + String(m).padStart(2, '0');
+    monthCounts[key] = await getMonthCount(curYr, m);
   }
 
   await browser.close();
 
-  // YTD = sum of completed months only (i.e. through end of last month)
-  // In February, that's just January. In March, Jan+Feb. Etc.
-  const completedThrough = curMo - 1; // last completed month number
-  let ytd = 0;
+  // Sum completed months
+  let ytd = 0, prior = 0;
   for (let m = 1; m <= completedThrough; m++) {
-    const key = curYr + '-' + String(m).padStart(2, '0');
-    ytd += (monthCounts[key] || 0);
+    ytd   += (monthCounts[curYr   + '-' + String(m).padStart(2,'0')] || 0);
+    prior += (monthCounts[priorYr + '-' + String(m).padStart(2,'0')] || 0);
   }
 
-  // Prior year: same completed months in prior year
-  let prior = 0;
-  for (let m = 1; m <= completedThrough; m++) {
-    const key = priorYr + '-' + String(m).padStart(2, '0');
-    prior += (monthCounts[key] || 0);
-  }
-
-  // asof = last day of most recently completed month
-  const asofDate = new Date(curYr, completedThrough, 0); // day 0 = last day of prev month
-  const asof = asofDate.toISOString().slice(0, 10);
-
+  const asof = new Date(curYr, completedThrough, 0).toISOString().slice(0, 10);
   console.log('Nashville: monthly counts:', JSON.stringify(monthCounts));
   console.log('Nashville: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
 
-  if (ytd === 0) throw new Error('Nashville: all monthly counts were zero or null — date filter param may not work');
+  if (ytd === 0) throw new Error('Nashville: all monthly counts zero — URL date filter may not work');
 
   return { ytd, prior, asof, monthly: monthCounts };
 }
