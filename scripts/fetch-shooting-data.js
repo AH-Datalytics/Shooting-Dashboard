@@ -1202,28 +1202,38 @@ async function fetchPortland() {
     'Reply ONLY in this exact format with no other text: HOM=N NFSI=N HOM_PRIOR=N NFSI_PRIOR=N'
   ].join(' ');
 
-  const claudeData = await new Promise((resolve, reject) => {
+  async function callVision(imgB64) {
     const body = JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 128,
       messages: [{ role: 'user', content: [
-        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64Image } },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: imgB64 } },
         { type: 'text', text: promptText }
       ]}]
     });
-    const req = require('https').request({
-      hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY,
-                 'anthropic-version': '2023-06-01', 'Content-Length': Buffer.byteLength(body) }
-    }, (res) => {
-      const chunks = []; res.on('data', c => chunks.push(c));
-      res.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString())); } catch(e) { reject(e); } });
+    const resp = await new Promise((resolve, reject) => {
+      const req = require('https').request({
+        hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY,
+                   'anthropic-version': '2023-06-01', 'Content-Length': Buffer.byteLength(body) }
+      }, (res) => {
+        const chunks = []; res.on('data', c => chunks.push(c));
+        res.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString())); } catch(e) { reject(e); } });
+      });
+      req.on('error', reject); req.write(body); req.end();
     });
-    req.on('error', reject); req.write(body); req.end();
-  });
+    return (resp.content?.[0]?.text || '').trim();
+  }
 
-  const visionText = (claudeData.content?.[0]?.text || '').trim();
+  let visionText = await callVision(base64Image);
   console.log('Portland vision response:', visionText);
+  // Retry once if response is empty or unparseable
+  if (!visionText.includes('HOM=')) {
+    console.log('Portland: retrying vision call...');
+    await new Promise(r => setTimeout(r, 2000));
+    visionText = await callVision(base64Image);
+    console.log('Portland vision retry response:', visionText);
+  }
 
   function extractVal(text, key) {
     var idx = text.indexOf(key + '=');
@@ -1258,45 +1268,98 @@ async function fetchPortland() {
 // Full dataset → count by year client-side.
 
 async function fetchNashville() {
-  // The viz is a dot map — no bar chart. The only number visible is the total
-  // in the page title: "Gunshot Injuries: M/D/YYYY - M/D/YYYY" and the count
-  // shown as "Fatal: N  Non-Fatal: N" or in the summary CSV (All=N).
+  // The URL date filter param is ignored — the viz always shows its default range.
+  // Only way to change the date range is through the UI controls.
   //
-  // Strategy: for each month we need, load the viz with a specific date range
-  // in the URL filter param, then read the count from the summary CSV endpoint
-  // (which we know returns 200 with All=N format).
-  // URL filter: ?Offense+Report+Date=01%2F01%2F2026-01%2F31%2F2026
+  // Strategy: use "Last N months" spinner in the filter dropdown.
+  // - Set N=1 → cumulative total for last 1 month (most recent completed month)
+  // - Set N=2 → cumulative total for last 2 months
+  // - Subtract consecutive values to isolate each month
+  //
+  // The filter UI (from screenshot):
+  //   - "Offense Report Date" dropdown on the right side
+  //   - Opens a panel with tabs: Years / Quarters / Months / Weeks / Days / Hours / Minutes
+  //   - "Months" tab is active; has radio buttons + "Last [N] months" spinner
+  //   - We type into the spinner, press Enter/Tab, wait for re-render, screenshot
+  //
+  // We need 13 months of data: Feb 2025 through Jan 2026 (last 13 completed months from now)
+  // So we fetch Last 1 through Last 13, each time screenshot + read Fatal+NonFatal, subtract.
 
   const now = new Date();
   const curYr = now.getFullYear();
   const priorYr = curYr - 1;
   const curMo = now.getMonth() + 1;
-  const completedThrough = curMo - 1;
+  const completedThrough = curMo - 1; // last fully-completed month (e.g. Jan when it's Feb)
+  // Total months needed: all completed months of curYr + all 12 of priorYr
+  // But we only need completedThrough months of curYr (Jan) + 12 months of priorYr
+  // = completedThrough + 12 months total, starting from most recent going back
+  const totalMonthsNeeded = completedThrough + 12;
 
   const { chromium } = require('playwright');
   const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage();
   page.setDefaultTimeout(60000);
 
-  const baseUrl = 'https://policepublicdata.nashville.gov/t/Police/views/GunshotInjury/GunshotInjuries';
+  const vizUrl = 'https://policepublicdata.nashville.gov/t/Police/views/GunshotInjury/GunshotInjuries?:embed=y&:showVizHome=no';
+  console.log('Nashville: loading viz...');
+  await page.goto(vizUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(6000);
 
-  // For each month: load the viz with that month's date range, screenshot it,
-  // and use vision API to read the gunshot victim count from the page title.
-  // The title always shows "Gunshot Injuries: M/D/YYYY - M/D/YYYY" and the map
-  // shows Fatal/Non-Fatal counts — the only numbers visible on the page.
-  async function getMonthCount(year, month) {
-    const pad = n => String(n).padStart(2, '0');
-    const daysInMonth = new Date(year, month, 0).getDate();
-    const dateParam = pad(month) + '%2F01%2F' + year + '-' + pad(month) + '%2F' + daysInMonth + '%2F' + year;
-    const url = baseUrl + '?:embed=y&:showVizHome=no&Offense+Report+Date=' + dateParam;
-    const label = year + '-' + pad(month);
+  // Open the date filter dropdown
+  // The filter label "Last 2 months" or "Offense Report Date" should be clickable
+  async function openFilter() {
+    // Try clicking the dropdown arrow next to the date filter label
+    // Tableau embeds render filter controls in the main frame (not an iframe)
+    const clicked = await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll('*'));
+      // Look for element with text matching the filter label
+      const el = all.find(e => {
+        const t = (e.innerText || e.textContent || '').trim();
+        return (t === 'Last 2 months' || t === 'Offense Report Date' || t === 'Last 1 month') &&
+               e.children.length <= 3;
+      });
+      if (el) { el.click(); return el.textContent.trim(); }
+      return null;
+    });
+    console.log('Nashville: clicked filter element:', clicked);
+    await page.waitForTimeout(1500);
+    return !!clicked;
+  }
 
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(4000);
+  // Set the "Last N months" spinner value and wait for the viz to re-render
+  async function setLastNMonths(n) {
+    // The spinner input should be visible after opening the filter
+    // Try to find it and set value
+    const set = await page.evaluate((n) => {
+      // Look for number input near "Last" text
+      const inputs = Array.from(document.querySelectorAll('input[type="number"], input[type="text"]'));
+      const spinner = inputs.find(i => {
+        const val = i.value;
+        return /^\d+$/.test(val) && parseInt(val) >= 1 && parseInt(val) <= 24;
+      });
+      if (spinner) {
+        spinner.focus();
+        spinner.value = String(n);
+        spinner.dispatchEvent(new Event('input', { bubbles: true }));
+        spinner.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      }
+      return false;
+    }, n);
 
+    if (set) {
+      // Press Enter/Tab to apply
+      await page.keyboard.press('Tab');
+      await page.waitForTimeout(3000);
+    } else {
+      console.log('Nashville: could not find spinner for N=' + n);
+    }
+    return set;
+  }
+
+  // Read the current Fatal + NonFatal count from a screenshot
+  async function readCount(label) {
     const imgBuf = await page.screenshot({ fullPage: false });
-
-    // Ask vision API to read Fatal and Non-Fatal counts from the screenshot
     const imgB64 = imgBuf.toString('base64');
     const body = JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
@@ -1305,11 +1368,10 @@ async function fetchNashville() {
         role: 'user',
         content: [
           { type: 'image', source: { type: 'base64', media_type: 'image/png', data: imgB64 } },
-          { type: 'text', text: 'This is a Nashville gunshot injuries map dashboard. Find the Fatal and Non-Fatal gunshot victim counts displayed on the page. Reply ONLY: FATAL=N NONFATAL=N' }
+          { type: 'text', text: 'Nashville gunshot injuries dashboard. Find the Fatal and Non-Fatal victim counts. Reply ONLY: FATAL=N NONFATAL=N' }
         ]
       }]
     });
-
     const resp = await new Promise((resolve, reject) => {
       const req = require('https').request({
         hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
@@ -1321,44 +1383,87 @@ async function fetchNashville() {
       });
       req.on('error', reject); req.write(body); req.end();
     });
-
     const text = (resp.content?.[0]?.text || '').trim();
-    const fatalM = text.match(/FATAL=(\d+)/);
-    const nonfatalM = text.match(/NONFATAL=(\d+)/);
-    if (fatalM && nonfatalM) {
-      const total = parseInt(fatalM[1]) + parseInt(nonfatalM[1]);
-      console.log('Nashville: ' + label + ' fatal=' + fatalM[1] + ' nonfatal=' + nonfatalM[1] + ' total=' + total);
+    const fM = text.match(/FATAL=(\d+)/);
+    const nfM = text.match(/NONFATAL=(\d+)/);
+    if (fM && nfM) {
+      const total = parseInt(fM[1]) + parseInt(nfM[1]);
+      console.log('Nashville: ' + label + ' fatal=' + fM[1] + ' nonfatal=' + nfM[1] + ' total=' + total);
       return total;
     }
-    console.log('Nashville: ' + label + ' vision response: ' + text + ' — could not parse');
+    console.log('Nashville: ' + label + ' could not parse: ' + text);
     return null;
   }
 
-  const monthCounts = {};
-  // Fetch all of prior year + completed months of current year
-  for (let m = 1; m <= 12; m++) {
-    const key = priorYr + '-' + String(m).padStart(2, '0');
-    monthCounts[key] = await getMonthCount(priorYr, m);
+  // Open the filter once
+  const filterOpened = await openFilter();
+  if (!filterOpened) {
+    console.log('Nashville: WARNING — could not open filter, will try clicking "Last N months" radio');
+    // Try clicking the "Last" radio button area directly
+    await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll('*'));
+      const el = all.find(e => (e.innerText || '').trim() === 'Last');
+      if (el) el.click();
+    });
+    await page.waitForTimeout(1500);
   }
-  for (let m = 1; m <= completedThrough; m++) {
-    const key = curYr + '-' + String(m).padStart(2, '0');
-    monthCounts[key] = await getMonthCount(curYr, m);
+
+  // Also make sure "Last N months" radio is selected (not "Previous month" etc.)
+  await page.evaluate(() => {
+    const inputs = Array.from(document.querySelectorAll('input[type="radio"]'));
+    // Find radio near "Last" label
+    const lastRadio = inputs.find(i => {
+      const label = i.labels?.[0]?.textContent || i.nextSibling?.textContent || '';
+      return label.includes('Last');
+    });
+    if (lastRadio && !lastRadio.checked) lastRadio.click();
+  }).catch(() => {});
+  await page.waitForTimeout(1000);
+
+  // Fetch cumulative counts for N=1 through totalMonthsNeeded
+  const cumulative = {}; // key: N (number of months back)
+  for (let n = 1; n <= totalMonthsNeeded; n++) {
+    const set = await setLastNMonths(n);
+    if (!set && n === 1) {
+      // Filter interaction failed entirely — throw to surface the issue
+      await browser.close();
+      throw new Error('Nashville: could not interact with Last N months filter');
+    }
+    cumulative[n] = await readCount('last-' + n);
   }
 
   await browser.close();
+  console.log('Nashville: cumulative counts:', JSON.stringify(cumulative));
 
-  // Sum completed months
+  // Derive individual month counts by subtraction
+  // cumulative[1] = most recent completed month (Jan 2026 when it's Feb 2026)
+  // cumulative[2] - cumulative[1] = 2nd most recent (Dec 2025), etc.
+  // Month label for cumulative[n]: go back n months from end of last completed month
+  const monthCounts = {};
+  const baseDate = new Date(curYr, completedThrough - 1, 1); // e.g. 2026-01-01
+  for (let n = 1; n <= totalMonthsNeeded; n++) {
+    const d = new Date(baseDate.getFullYear(), baseDate.getMonth() - (n - 1), 1);
+    const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    const prev = cumulative[n - 1] || 0;
+    const curr = cumulative[n];
+    monthCounts[key] = curr !== null ? (curr - prev) : null;
+  }
+
+  console.log('Nashville: monthly counts:', JSON.stringify(monthCounts));
+
+  // YTD = sum of completed months of curYr
   let ytd = 0, prior = 0;
   for (let m = 1; m <= completedThrough; m++) {
-    ytd   += (monthCounts[curYr   + '-' + String(m).padStart(2,'0')] || 0);
-    prior += (monthCounts[priorYr + '-' + String(m).padStart(2,'0')] || 0);
+    ytd += (monthCounts[curYr + '-' + String(m).padStart(2, '0')] || 0);
+  }
+  for (let m = 1; m <= completedThrough; m++) {
+    prior += (monthCounts[priorYr + '-' + String(m).padStart(2, '0')] || 0);
   }
 
   const asof = new Date(curYr, completedThrough, 0).toISOString().slice(0, 10);
-  console.log('Nashville: monthly counts:', JSON.stringify(monthCounts));
   console.log('Nashville: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
 
-  if (ytd === 0) throw new Error('Nashville: all monthly counts zero — URL date filter may not work');
+  if (ytd === 0) throw new Error('Nashville: ytd is zero — filter interaction or vision may have failed');
 
   return { ytd, prior, asof, monthly: monthCounts };
 }
