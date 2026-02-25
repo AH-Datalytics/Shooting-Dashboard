@@ -1156,47 +1156,41 @@ var CITIES = [
     _cache: null,
     _loadData: async function() {
       if (this._cache) return this._cache;
-      // Query all Non-Fatal Gunshot Injury rows
-      var where = "CRIME_CATEGORY = 'Non-Fatal Gunshot Injury'";
+      // Query Total Type rows for Non-Fatal Gunshot Injury in CMPD Jurisdiction
+      var where = "ROW_TYPE = 'Total Type' AND OFFENSE_DESCRIPTION = 'Non-Fatal Gunshot Injury' AND GEOGRAPHY = 'CMPD Jurisdiction'";
       var url = this._url + '?where=' + encodeURIComponent(where) +
-        '&outFields=*&returnGeometry=false&resultRecordCount=2000&f=json';
+        '&outFields=CALENDAR_YEAR,CALENDAR_MONTH,OFFENSE_COUNT,GEOGRAPHY&returnGeometry=false&resultRecordCount=2000&f=json';
       var r = await fetch(url, { signal: AbortSignal.timeout(20000) });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       var d = await r.json();
       if (d.error) throw new Error(d.error.message || JSON.stringify(d.error).slice(0, 200));
       this._cache = d.features || [];
-      // Log field names on first load to help debug
       if (this._cache.length > 0) {
-        console.log('Charlotte fields:', Object.keys(this._cache[0].attributes));
         console.log('Charlotte sample:', JSON.stringify(this._cache[0].attributes));
       }
       return this._cache;
     },
     count: async function(s, e) {
       var rows = await this._loadData();
-      var year = parseInt(s.slice(0, 4));
+      var year = s.slice(0, 4); // CALENDAR_YEAR is a string
       // Find the max month available for the CURRENT year to ensure fair comparison
       var maxMonth = 0;
       rows.forEach(function(f) {
         var a = f.attributes;
-        var rowType = a.ROW_TYPE || a.Row_Type || a.row_type || a.AREA_TYPE || a.Area_Type || '';
-        if (!/total/i.test(rowType)) return;
-        var ry = a.YEAR || a.Year || a.year || a.CALENDAR_YEAR || null;
-        var rm = a.MONTH || a.Month || a.month || a.CALENDAR_MONTH || null;
-        if (ry == CURRENT_YEAR && rm > maxMonth) maxMonth = rm;
+        if (a.CALENDAR_YEAR == String(CURRENT_YEAR)) {
+          var m = parseInt(a.CALENDAR_MONTH) || 0;
+          if (m > maxMonth) maxMonth = m;
+        }
       });
       // Sum counts for requested year, only up to the max available month
       var total = 0, found = false;
       rows.forEach(function(f) {
         var a = f.attributes;
-        var rowType = a.ROW_TYPE || a.Row_Type || a.row_type || a.AREA_TYPE || a.Area_Type || '';
-        if (!/total/i.test(rowType)) return;
-        var ry = a.YEAR || a.Year || a.year || a.CALENDAR_YEAR || null;
-        var rm = a.MONTH || a.Month || a.month || a.CALENDAR_MONTH || null;
-        if (ry != year) return;
-        if (maxMonth > 0 && rm > maxMonth) return; // fair comparison
-        var count = a.COUNT_ || a.Count_ || a.OFFENSE_COUNT || a.Offense_Count || a.VALUE_ || a.TOTAL || a.Total || a.COUNT || 0;
-        if (count > 0) { total += count; found = true; }
+        if (a.CALENDAR_YEAR != year) return;
+        var m = parseInt(a.CALENDAR_MONTH) || 0;
+        if (maxMonth > 0 && m > maxMonth) return;
+        var count = a.OFFENSE_COUNT || 0;
+        total += count; found = true;
       });
       return found ? total : null;
     },
@@ -1205,11 +1199,8 @@ var CITIES = [
       var latestDate = null;
       rows.forEach(function(f) {
         var a = f.attributes;
-        var rowType = a.ROW_TYPE || a.Row_Type || a.row_type || a.AREA_TYPE || a.Area_Type || '';
-        if (!/total/i.test(rowType)) return;
-        // Find the most recent month/year combo
-        var y = a.YEAR || a.Year || a.year || a.CALENDAR_YEAR || null;
-        var m = a.MONTH || a.Month || a.month || a.CALENDAR_MONTH || null;
+        var y = a.CALENDAR_YEAR;
+        var m = a.CALENDAR_MONTH;
         if (y && m) {
           var d = y + '-' + String(m).padStart(2, '0') + '-01';
           if (!latestDate || d > latestDate) latestDate = d;
