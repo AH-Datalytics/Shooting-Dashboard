@@ -1744,7 +1744,7 @@ function exportJPEG() {
   ctx.textAlign = 'right';
   ctx.fillText(totalYtd.toLocaleString(), colYTD, ty);
   ctx.fillStyle = '#000000';
-  ctx.font = '13px Georgia, serif';
+  ctx.font = 'bold 13px Georgia, serif';
   ctx.fillText(totalPrior.toLocaleString(), colPrior, ty);
   if (totalChg != null) {
     var sign = totalChg > 0 ? '+' : '';
