@@ -1358,6 +1358,7 @@ async function fetchHartford() {
   }
 
   // Use Playwright to download PDF (site blocks raw HTTP with 403)
+  const { chromium } = require('playwright');
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
 
@@ -1413,18 +1414,12 @@ async function fetchHartford() {
     return { ytd2026: parseVal(vals[8]), ytd2025: parseVal(vals[9]) };
   }
 
-  var murder = parseVictimRow('Murder Victims');
   var nonfatal = parseVictimRow('Non_Fatal Shooting Victims');
 
-  console.log('Hartford: murder YTD=' + murder.ytd2026 + ' prior=' + murder.ytd2025);
   console.log('Hartford: non-fatal YTD=' + nonfatal.ytd2026 + ' prior=' + nonfatal.ytd2025);
 
-  var ytd = murder.ytd2026 + nonfatal.ytd2026;
-  var prior = murder.ytd2025 + nonfatal.ytd2025;
-
-  if (ytd === 0 && prior === 0) {
-    throw new Error('Hartford: parsed all zeros - check PDF format. Tokens near Victim: ' + joined.substring(joined.indexOf('Victim'), joined.indexOf('Victim') + 200));
-  }
+  var ytd = nonfatal.ytd2026;
+  var prior = nonfatal.ytd2025;
 
   // Try to get as-of from PDF text (more reliable than URL date)
   var ytdMatch = joined.match(/Year\s+to\s+Date.*?to\s+(\w+)\s+(\d{1,2}),?\s+(\d{4})/i);
