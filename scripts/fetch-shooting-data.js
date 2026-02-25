@@ -1013,6 +1013,7 @@ async function main() {
     safe('Pittsburgh', fetchPittsburgh, 120000),
     safe('Portland',   fetchPortland,   120000),
     safe('Buffalo',    fetchBuffalo,    120000),
+    safe('Nashville',  fetchNashville,  120000),
   ]);
 
   for (const { key, value } of fetches) {
@@ -1136,5 +1137,232 @@ async function fetchPortland() {
   console.log('Portland final: homFirearm=' + homFirearmYtd + '+' + nfsiYtd + '=' + ytd + ' prior=' + homFirearmPrior + '+' + nfsiPrior + '=' + prior + ' asof=' + asof);
 
   if (ytd === 0 && prior === 0) throw new Error('Portland: parsed all zeros');
+  return { ytd, prior, asof };
+}
+
+
+// ─── Nashville (Tableau - Metro Nashville Gunshot Injuries map) ───────────────
+// Dashboard: https://www.nashville.gov/departments/police/crime-statistics
+// Tableau viz with a map download. Set "Offense Report Date" to "Last 3 years",
+// download crosstab (Map sheet) as CSV. Each row = one victim.
+// Filter by year client-side to get YTD vs prior YTD counts.
+
+async function fetchNashville() {
+  // Default filter is "This year". We download twice:
+  //   1) Default ("This year") → current YTD victims
+  //   2) Change to "Last year" → prior YTD victims (filtered to same MM/DD cutoff)
+  const { chromium } = require('playwright');
+  const fs = require('fs');
+  const browser = await chromium.launch({ headless: true });
+  const page    = await browser.newPage();
+  await page.setViewportSize({ width: 1536, height: 900 });
+  page.setDefaultTimeout(30000);
+
+  const embedUrl = 'https://policepublicdata.nashville.gov/t/Police/views/GunshotInjury/GunshotInjuries?:showVizHome=no&:embed=true&:toolbar=yes&:device=desktop';
+
+  // Helper: find a Tableau tabComboBox by label/text and click it, return coords
+  async function findAndClickCombo(labelHint) {
+    const info = await page.evaluate(function(hint) {
+      var combos = Array.from(document.querySelectorAll('.tabComboBox'));
+      var match = combos.find(function(el) {
+        return (el.getAttribute('aria-label') || '').toLowerCase().includes(hint) ||
+               el.textContent.trim().toLowerCase().includes(hint);
+      });
+      if (!match) {
+        // Log all combos to help debug
+        return { found: false, all: combos.map(function(el) {
+          return { label: el.getAttribute('aria-label'), text: el.textContent.trim().substring(0,60) };
+        })};
+      }
+      var r = match.getBoundingClientRect();
+      return { found: true, x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2), text: match.textContent.trim().substring(0,60) };
+    }, labelHint);
+    if (info.found) {
+      await page.mouse.click(info.x, info.y);
+    }
+    return info;
+  }
+
+  // Helper: find an option in an open dropdown by text and click it
+  async function clickOption(optText) {
+    const info = await page.evaluate(function(text) {
+      var allEls = Array.from(document.querySelectorAll('*'));
+      // Look for leaf elements matching the text exactly
+      var opt = allEls.find(function(el) {
+        return (el.innerText || '').trim() === text && el.children.length === 0;
+      });
+      if (!opt) {
+        var items = allEls
+          .filter(function(el) { return el.tagName === 'LI' || el.getAttribute('role') === 'option'; })
+          .map(function(el) { return (el.innerText||el.textContent||'').trim().substring(0,50); })
+          .filter(Boolean);
+        return { found: false, items: items.slice(0, 15) };
+      }
+      var r = opt.getBoundingClientRect();
+      return { found: true, x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) };
+    }, optText);
+    if (info.found) {
+      await page.mouse.click(info.x, info.y);
+    }
+    return info;
+  }
+
+  // Helper: run the full download flow (opens menu, clicks Crosstab, selects CSV, downloads)
+  async function downloadCSV(label) {
+    // Click toolbar Download button
+    const dlBtn = await page.evaluate(function() {
+      var candidates = Array.from(document.querySelectorAll('*'));
+      var btn = candidates.find(function(el) {
+        var l = (el.getAttribute('aria-label') || el.getAttribute('title') || '').toLowerCase();
+        var r = el.getBoundingClientRect();
+        return (l.includes('download') || l.includes('export')) && r.width > 0 && r.height > 0;
+      });
+      if (!btn) return null;
+      var r = btn.getBoundingClientRect();
+      return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2), label: btn.getAttribute('aria-label') };
+    });
+    if (!dlBtn) throw new Error('Download toolbar button not found');
+    console.log('Nashville: download btn for ' + label + ':', JSON.stringify(dlBtn));
+    await page.mouse.click(dlBtn.x, dlBtn.y);
+    await page.waitForTimeout(1500);
+
+    // Click Crosstab
+    const ctBtn = await page.evaluate(function() {
+      var els = Array.from(document.querySelectorAll('*'));
+      var ct = els.find(function(el) { return (el.innerText || '').trim() === 'Crosstab'; });
+      if (!ct) return null;
+      var r = ct.getBoundingClientRect();
+      return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) };
+    });
+    if (!ctBtn) throw new Error('Crosstab option not found');
+    await page.mouse.click(ctBtn.x, ctBtn.y);
+    await page.waitForTimeout(1500);
+
+    // Select CSV
+    const csvBtn = await page.evaluate(function() {
+      var els = Array.from(document.querySelectorAll('*'));
+      var csv = els.find(function(el) { return (el.innerText || '').trim() === 'CSV'; });
+      if (!csv) return null;
+      var r = csv.getBoundingClientRect();
+      return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) };
+    });
+    if (csvBtn) {
+      await page.mouse.click(csvBtn.x, csvBtn.y);
+      await page.waitForTimeout(500);
+    }
+
+    // Click final Download button
+    const finalBtn = await page.evaluate(function() {
+      var btns = Array.from(document.querySelectorAll('button, [role="button"]'));
+      var dl = btns.find(function(b) {
+        var t = (b.innerText || b.textContent || '').trim();
+        return t === 'Download' || t === 'Export';
+      });
+      if (!dl) return null;
+      var r = dl.getBoundingClientRect();
+      return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) };
+    });
+    if (!finalBtn) throw new Error('Final Download button not found');
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 30000 }),
+      page.mouse.click(finalBtn.x, finalBtn.y)
+    ]);
+    const dlPath = await download.path();
+    const rawBuf = fs.readFileSync(dlPath);
+    const csvText = (rawBuf[0] === 0xFF && rawBuf[1] === 0xFE)
+      ? rawBuf.toString('utf16le')
+      : rawBuf.toString('utf8');
+    console.log('Nashville: ' + label + ' CSV downloaded, bytes:', rawBuf.length, 'rows:', csvText.split('\n').length);
+    return csvText;
+  }
+
+  // Helper: count victim rows in a CSV for a given year, up to MM/DD cutoff
+  function countVictims(csvText, targetYear, mmddCutoff) {
+    var lines = csvText.split('\n').map(function(l) { return l.trim(); }).filter(Boolean);
+    var header = lines[0].replace(/^\uFEFF/, '');
+    var cols = header.split('\t');
+    var rptdtIdx = cols.indexOf('I Rptdt');
+    if (rptdtIdx < 0) throw new Error('I Rptdt column not found, cols: ' + cols.join(','));
+    var count = 0, maxDate = null, asof = null;
+    for (var i = 1; i < lines.length; i++) {
+      var parts = lines[i].split('\t');
+      if (parts.length <= rptdtIdx) continue;
+      var rptdt = (parts[rptdtIdx] || '').trim();
+      if (!rptdt) continue;
+      var datePart = rptdt.split(' ')[0];
+      var dp = datePart.split('/');
+      if (dp.length < 3) continue;
+      var rowYr = parseInt(dp[2]);
+      var rowMm = dp[0].padStart(2,'0');
+      var rowDd = dp[1].padStart(2,'0');
+      if (rowYr !== targetYear) continue;
+      if (mmddCutoff && (rowMm + '/' + rowDd) > mmddCutoff) continue;
+      count++;
+      var d = new Date(rowYr, parseInt(dp[0])-1, parseInt(dp[1]));
+      if (!maxDate || d > maxDate) { maxDate = d; asof = rowYr + '-' + rowMm + '-' + rowDd; }
+    }
+    return { count: count, asof: asof };
+  }
+
+  // ── Step 1: Load page, confirm it renders ──────────────────────────────────
+  console.log('Nashville: loading dashboard...');
+  await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(10000);
+
+  const bodyText = await page.evaluate(function() { return document.body.innerText; });
+  console.log('Nashville: page sample:', bodyText.substring(0, 300));
+
+  const now = new Date();
+  const curYr = now.getFullYear();
+  const priorYr = curYr - 1;
+  const mmdd = (now.getMonth() + 1).toString().padStart(2,'0') + '/' + now.getDate().toString().padStart(2,'0');
+
+  // ── Step 2: Download current year CSV (default "This year" filter) ─────────
+  let csvCurrent = null;
+  try {
+    csvCurrent = await downloadCSV('current year');
+  } catch(e) {
+    console.log('Nashville: current year download failed:', e.message.split('\n')[0]);
+  }
+
+  // ── Step 3: Change filter to "Last year", download prior year CSV ──────────
+  let csvPrior = null;
+  try {
+    // Find and click the date filter combo
+    console.log('Nashville: switching filter to Last year...');
+    const comboResult = await findAndClickCombo('offense report date');
+    console.log('Nashville: date combo result:', JSON.stringify(comboResult));
+    await page.waitForTimeout(2000);
+
+    // Click "Last year" option
+    const optResult = await clickOption('Last year');
+    console.log('Nashville: Last year option:', JSON.stringify(optResult));
+    if (!optResult.found) {
+      // Log what options are available
+      console.log('Nashville: available options:', JSON.stringify(optResult.items));
+    }
+    await page.waitForTimeout(4000);
+
+    csvPrior = await downloadCSV('prior year');
+  } catch(e) {
+    console.log('Nashville: prior year download failed:', e.message.split('\n')[0]);
+  }
+
+  await browser.close();
+
+  if (!csvCurrent) throw new Error('Nashville: no current year CSV');
+  if (!csvPrior)   throw new Error('Nashville: no prior year CSV');
+
+  // ── Step 4: Parse both CSVs ────────────────────────────────────────────────
+  const currResult  = countVictims(csvCurrent, curYr,   null);   // all current year = YTD by definition
+  const priorResult = countVictims(csvPrior,   priorYr, mmdd);   // prior year up to same MM/DD
+
+  const ytd   = currResult.count;
+  const prior = priorResult.count;
+  const asof  = currResult.asof;
+
+  console.log('Nashville parsed: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof + ' (cutoff=' + mmdd + ')');
+  if (ytd === 0 && prior === 0) throw new Error('Nashville: parsed all zeros');
   return { ytd, prior, asof };
 }
