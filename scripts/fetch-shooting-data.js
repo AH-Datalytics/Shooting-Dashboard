@@ -1073,6 +1073,8 @@ async function main() {
     safe('Buffalo',    fetchBuffalo,    120000),
     safe('Nashville',  fetchNashville,  180000),
     safe('Hartford',   fetchHartford,   60000),
+    safe('Denver',     fetchDenver,     120000),
+    safe('Portsmouth', fetchPortsmouth, 120000),
   ]);
 
   for (const { key, value } of fetches) {
@@ -1230,6 +1232,272 @@ async function fetchPortland() {
   const prior = homPrior + nfsiPrior;
   console.log('Portland final: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
   if (ytd === 0 && prior === 0) throw new Error('Portland: parsed all zeros');
+  return { ytd, prior, asof };
+}
+
+
+// ─── Denver (Power BI - Firearm Homicides + Non-Fatal Shootings) ─────────────
+// Embedded Power BI on Denver PD Performance page. Page 3 ("Firearm Homicide")
+// shows combined Firearm Homicides + Non-Fatal Shooting Victims YTD vs prior.
+
+async function fetchDenver() {
+  const { chromium } = require('playwright');
+  const browser = await chromium.launch({ headless: true });
+  const page    = await browser.newPage();
+  await page.setViewportSize({ width: 1536, height: 900 });
+  page.setDefaultTimeout(30000);
+
+  // Load the wrapper page
+  const url = 'https://www.denvergov.org/Government/Agencies-Departments-Offices/Agencies-Departments-Offices-Directory/Police-Department/Performance-and-Transparency#section-5';
+  console.log('Denver: loading wrapper page...');
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(10000);
+
+  // Find the Power BI iframe (homicide/shooting dashboard)
+  const iframeSrc = await page.evaluate(() => {
+    const frames = Array.from(document.querySelectorAll('iframe'));
+    const pbi = frames.find(f => f.src && (f.src.includes('powerbi') || f.src.includes('app.powerbigov')));
+    return pbi ? pbi.src : null;
+  });
+  console.log('Denver iframe src:', iframeSrc);
+
+  if (!iframeSrc) {
+    // Try scrolling down to trigger lazy-loaded iframes
+    await page.evaluate(() => window.scrollBy(0, 3000));
+    await page.waitForTimeout(5000);
+    const iframeSrc2 = await page.evaluate(() => {
+      const frames = Array.from(document.querySelectorAll('iframe'));
+      const pbi = frames.find(f => f.src && (f.src.includes('powerbi') || f.src.includes('app.powerbigov')));
+      return pbi ? pbi.src : null;
+    });
+    if (!iframeSrc2) {
+      const src = await page.content();
+      console.log('Denver page source snippet:', src.substring(0, 3000));
+      await browser.close();
+      throw new Error('Could not find Power BI iframe on Denver page');
+    }
+    console.log('Denver iframe src (after scroll):', iframeSrc2);
+    await page.goto(iframeSrc2, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  } else {
+    await page.goto(iframeSrc, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  }
+
+  await page.waitForTimeout(15000);
+  const page1Text = await page.evaluate(() => document.body.innerText);
+  console.log('Denver page1 sample:', page1Text.substring(0, 600));
+
+  // Navigate to page 3 ("Firearm Homicide..." tab) by clicking next twice
+  console.log('Denver: navigating to page 3...');
+  for (let i = 0; i < 2; i++) {
+    try {
+      await page.locator('.pbi-glyph-chevronrightmedium').first().click({ force: true, timeout: 5000 });
+      await page.waitForTimeout(5000);
+      console.log(`Denver: clicked next (${i+1}/2)`);
+    } catch(e) {
+      try {
+        await page.locator('[aria-label="Next page"]').first().click({ force: true, timeout: 3000 });
+        await page.waitForTimeout(5000);
+        console.log(`Denver: clicked Next page button (${i+1}/2)`);
+      } catch(e2) {
+        console.log(`Denver: nav click ${i+1} failed:`, e.message);
+      }
+    }
+  }
+
+  await page.waitForTimeout(5000);
+  const page3Text = await page.evaluate(() => document.body.innerText);
+  console.log('Denver page3 sample:', page3Text.substring(0, 1000));
+
+  // Extract Last Updated date
+  let asof = null;
+  const dateMatch = page3Text.match(/Last Updated[:\s]*(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
+  if (dateMatch) {
+    asof = `${dateMatch[3]}-${dateMatch[1].padStart(2,'0')}-${dateMatch[2].padStart(2,'0')}`;
+  }
+  console.log('Denver asof:', asof);
+
+  // Try text-based extraction first
+  const yr = new Date().getFullYear();
+  let ytd = null, prior = null;
+
+  // Look for "Firearm Homicides + Non-Fatal Shooting Victims YYYY YTD" followed by number
+  const ytdMatch = page3Text.match(new RegExp('Firearm Homicides \\+ Non-Fatal Shooting Victims ' + yr + ' YTD[\\s\\n]+(\\d+)', 'i'));
+  const priorMatch = page3Text.match(new RegExp('Firearm Homicides \\+ Non-Fatal Shooting Victims ' + (yr-1) + ' YTD[\\s\\n]+(\\d+)', 'i'));
+
+  if (ytdMatch) ytd = parseInt(ytdMatch[1]);
+  if (priorMatch) prior = parseInt(priorMatch[1]);
+  console.log('Denver text parse: ytd=' + ytd + ' prior=' + prior);
+
+  // Strategy 2: look for the numbers near the labels
+  if (ytd === null) {
+    const lines = page3Text.split('\n').map(l => l.trim()).filter(Boolean);
+    for (let i = 0; i < lines.length; i++) {
+      if (/Firearm Homicides.*Non-Fatal.*\d{4}\s*YTD/i.test(lines[i])) {
+        // Check surrounding lines for numbers
+        for (let j = Math.max(0, i-2); j < Math.min(lines.length, i+3); j++) {
+          if (/^\d+$/.test(lines[j])) {
+            if (lines[i].includes(String(yr)) && ytd === null) ytd = parseInt(lines[j]);
+            else if (lines[i].includes(String(yr-1)) && prior === null) prior = parseInt(lines[j]);
+          }
+        }
+      }
+    }
+    console.log('Denver line-scan: ytd=' + ytd + ' prior=' + prior);
+  }
+
+  // Strategy 3: vision fallback
+  if (ytd === null || prior === null) {
+    console.log('Denver: falling back to vision API...');
+    const screenshotBuf = await page.screenshot({ fullPage: false });
+    await browser.close();
+    const base64Image = screenshotBuf.toString('base64');
+
+    const promptText = [
+      'This is a Denver Police Department Power BI dashboard showing "Reported Firearm Homicides and Non-Fatal Shootings in Denver".',
+      'It shows two main numbers: the current year YTD count and the previous year YTD count for "Firearm Homicides + Non-Fatal Shooting Victims".',
+      'It also shows "Last Updated" date in the top right.',
+      'Extract: YTD (current year number), PRIOR (previous year number), and ASOF (Last Updated date in YYYY-MM-DD format).',
+      'Reply ONLY in this exact format: YTD=N PRIOR=N ASOF=YYYY-MM-DD'
+    ].join(' ');
+
+    const body = JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 128,
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64Image } },
+        { type: 'text', text: promptText }
+      ]}]
+    });
+    const resp = await new Promise((resolve, reject) => {
+      const req = require('https').request({
+        hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY,
+                   'anthropic-version': '2023-06-01', 'Content-Length': Buffer.byteLength(body) }
+      }, (res) => {
+        const chunks = []; res.on('data', c => chunks.push(c));
+        res.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString())); } catch(e) { reject(e); } });
+      });
+      req.on('error', reject); req.write(body); req.end();
+    });
+    const visionText = (resp.content?.[0]?.text || '').trim();
+    console.log('Denver vision response:', visionText);
+
+    const ytdV = visionText.match(/YTD=(\d+)/);
+    const priorV = visionText.match(/PRIOR=(\d+)/);
+    const asofV = visionText.match(/ASOF=(\d{4}-\d{2}-\d{2})/);
+    if (ytdV) ytd = parseInt(ytdV[1]);
+    if (priorV) prior = parseInt(priorV[1]);
+    if (asofV && !asof) asof = asofV[1];
+  } else {
+    await browser.close();
+  }
+
+  console.log('Denver final: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
+  if (ytd === null || prior === null) throw new Error('Denver: could not extract data');
+  return { ytd, prior, asof };
+}
+
+
+// ─── Portsmouth (Power BI - GSW Victims) ─────────────────────────────────────
+// Direct Power BI embed. Shows bar chart of GSW Victims by year with YTD tab.
+// Need to sum Non-Fatal (yellow) + Fatal Non-Suicide (red) for current and prior year.
+// Chart-based data, so vision API is the primary strategy.
+
+async function fetchPortsmouth() {
+  const { chromium } = require('playwright');
+  const browser = await chromium.launch({ headless: true });
+  const page    = await browser.newPage();
+  await page.setViewportSize({ width: 1536, height: 900 });
+  page.setDefaultTimeout(30000);
+
+  const url = 'https://app.powerbigov.us/view?r=eyJrIjoiZDc3ZmQyYzMtOTgyYi00ODQzLTk4ZWUtZWQyY2ZkODM5ZWNkIiwidCI6ImM3N2RiNGQ4LWEwZjUtNDU0YS05MmMxLWI3ZDg0YzY0ZmQ0NCJ9';
+  console.log('Portsmouth: loading Power BI dashboard...');
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(20000);
+
+  const bodyText = await page.evaluate(() => document.body.innerText);
+  console.log('Portsmouth page sample:', bodyText.substring(0, 800));
+
+  // Try to extract date from text
+  let asof = null;
+  const dateMatch = bodyText.match(/(?:Last Updated|Updated)[:\s]*(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
+  if (dateMatch) {
+    asof = `${dateMatch[3]}-${dateMatch[1].padStart(2,'0')}-${dateMatch[2].padStart(2,'0')}`;
+  }
+
+  // Screenshot for vision API (chart data needs visual reading)
+  const screenshotBuf = await page.screenshot({ fullPage: false });
+  await browser.close();
+  console.log('Portsmouth: screenshot taken, size:', screenshotBuf.length, 'bytes');
+
+  const base64Image = screenshotBuf.toString('base64');
+  const yr = new Date().getFullYear();
+
+  const promptText = [
+    'This is a Portsmouth Police Power BI dashboard showing "GSW Victims – Injuries/Death & Rate (YTD)".',
+    'It has a bar chart with years on the x-axis. Each year has stacked bars:',
+    '  - Yellow bars = Non-Fatal gunshot victims',
+    '  - Red bars = Fatal (Non-Suicide) gunshot victims',
+    '  - The number at the top of each year\'s bars = Total Gunshot Victims',
+    'I need the TOTAL Gunshot Victims (the number shown at the top of each bar group) for ' + yr + ' and ' + (yr-1) + '.',
+    'Also look for any "Last Updated" or date indicator.',
+    'Reply ONLY in this format: YTD=N PRIOR=N ASOF=YYYY-MM-DD',
+    'If you cannot find a date, omit ASOF. Use the total numbers shown at the top of each year\'s bars.'
+  ].join(' ');
+
+  const body = JSON.stringify({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 128,
+    messages: [{ role: 'user', content: [
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64Image } },
+      { type: 'text', text: promptText }
+    ]}]
+  });
+
+  const resp = await new Promise((resolve, reject) => {
+    const req = require('https').request({
+      hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY,
+                 'anthropic-version': '2023-06-01', 'Content-Length': Buffer.byteLength(body) }
+    }, (res) => {
+      const chunks = []; res.on('data', c => chunks.push(c));
+      res.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString())); } catch(e) { reject(e); } });
+    });
+    req.on('error', reject); req.write(body); req.end();
+  });
+
+  let visionText = (resp.content?.[0]?.text || '').trim();
+  console.log('Portsmouth vision response:', visionText);
+
+  // Retry if empty
+  for (let retry = 1; retry <= 2 && !visionText.includes('YTD='); retry++) {
+    console.log('Portsmouth: retrying vision call attempt ' + retry + '...');
+    await new Promise(r => setTimeout(r, 3000));
+    const resp2 = await new Promise((resolve, reject) => {
+      const req = require('https').request({
+        hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY,
+                   'anthropic-version': '2023-06-01', 'Content-Length': Buffer.byteLength(body) }
+      }, (res) => {
+        const chunks = []; res.on('data', c => chunks.push(c));
+        res.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString())); } catch(e) { reject(e); } });
+      });
+      req.on('error', reject); req.write(body); req.end();
+    });
+    visionText = (resp2.content?.[0]?.text || '').trim();
+    console.log('Portsmouth vision retry ' + retry + ' response:', visionText);
+  }
+
+  const ytdV = visionText.match(/YTD=(\d+)/);
+  const priorV = visionText.match(/PRIOR=(\d+)/);
+  const asofV = visionText.match(/ASOF=(\d{4}-\d{2}-\d{2})/);
+
+  const ytd = ytdV ? parseInt(ytdV[1]) : null;
+  const prior = priorV ? parseInt(priorV[1]) : null;
+  if (asofV && !asof) asof = asofV[1];
+
+  console.log('Portsmouth final: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
+  if (ytd === null || prior === null) throw new Error('Portsmouth: vision parse failed: ' + visionText);
   return { ytd, prior, asof };
 }
 
