@@ -984,30 +984,60 @@ async function fetchWilmington() {
   const wBrowser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
   const wPage = await wBrowser.newPage();
   wPage.setDefaultTimeout(30000);
-  await wPage.goto(indexUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await wPage.waitForTimeout(2000);
+  await wPage.goto(indexUrl, { waitUntil: 'networkidle', timeout: 30000 });
+  await wPage.waitForTimeout(3000);
   const html = await wPage.content();
+  // Log a snippet so we can see what the page actually contains
+  const bodyText = await wPage.evaluate(() => document.body ? document.body.innerText.substring(0, 500) : 'no body');
+  console.log('Wilmington: index page length:', html.length, 'body snippet:', bodyText);
+  // Also try: find all links on page for diagnosis
+  const allLinks = await wPage.evaluate(() =>
+    Array.from(document.querySelectorAll('a[href]'))
+      .map(a => ({ href: a.href, text: (a.innerText||'').trim().substring(0,60) }))
+      .filter(l => l.text || l.href.includes('document'))
+      .slice(0, 30)
+  );
+  console.log('Wilmington: page links:', JSON.stringify(allLinks));
   await wBrowser.close();
-  console.log('Wilmington: index page length:', html.length);
 
   // Find the most recent CompStat PDF link
-  // Links look like: href="/home/showpublisheddocument/NNNN/NNNN"
-  // with link text containing "WPD CompStat Report"
-  // Strategy: find all showpublisheddocument hrefs near "CompStat" text
-  const linkMatches = [...html.matchAll(/href="(\/home\/showpublisheddocument\/[^"]+)"[^>]*>([^<]*(?:CompStat|compstat)[^<]*)</gi)];
+  // Try multiple strategies in order of specificity
   let pdfPath = null;
-  if (linkMatches.length > 0) {
-    pdfPath = linkMatches[0][1];
-    console.log('Wilmington: found PDF link via anchor text:', pdfPath);
-  } else {
-    // Fallback: find any showpublisheddocument link that appears near "CompStat" in the HTML
+
+  // Strategy 1: anchor text contains "CompStat" and href is showpublisheddocument
+  const anchorMatches = [...html.matchAll(/href="(\/home\/showpublisheddocument\/[^"]+)"[^>]*>([^<]*(?:CompStat|compstat)[^<]*)</gi)];
+  if (anchorMatches.length > 0) {
+    pdfPath = anchorMatches[0][1];
+    console.log('Wilmington: found PDF via anchor text:', pdfPath);
+  }
+
+  // Strategy 2: any showpublisheddocument link within 2000 chars of "CompStat"
+  if (!pdfPath) {
     const compstatIdx = html.toLowerCase().indexOf('compstat');
-    if (compstatIdx < 0) throw new Error('Wilmington: "CompStat" not found on index page');
-    const nearby = html.substring(Math.max(0, compstatIdx - 500), compstatIdx + 2000);
-    const nearbyMatch = nearby.match(/href="(\/home\/showpublisheddocument\/[^"]+)"/i);
-    if (!nearbyMatch) throw new Error('Wilmington: no showpublisheddocument link near CompStat section');
-    pdfPath = nearbyMatch[1];
-    console.log('Wilmington: found PDF link via proximity:', pdfPath);
+    if (compstatIdx >= 0) {
+      const nearby = html.substring(Math.max(0, compstatIdx - 200), compstatIdx + 2000);
+      const nearbyMatch = nearby.match(/href="(\/home\/showpublisheddocument\/[^"]+)"/i);
+      if (nearbyMatch) {
+        pdfPath = nearbyMatch[1];
+        console.log('Wilmington: found PDF via proximity:', pdfPath);
+      }
+    }
+  }
+
+  // Strategy 3: any showpublisheddocument link anywhere on page (take first/largest ID = most recent)
+  if (!pdfPath) {
+    const allDocLinks = [...html.matchAll(/href="(\/home\/showpublisheddocument\/(\d+)\/[^"]+)"/gi)];
+    if (allDocLinks.length > 0) {
+      // Sort by document ID descending to get most recent
+      allDocLinks.sort((a, b) => parseInt(b[2]) - parseInt(a[2]));
+      pdfPath = allDocLinks[0][1];
+      console.log('Wilmington: found PDF via all doc links (most recent ID):', pdfPath);
+    }
+  }
+
+  if (!pdfPath) {
+    console.log('Wilmington: HTML snippet:', html.substring(0, 1000));
+    throw new Error('Wilmington: could not find any PDF link on index page');
   }
 
   const pdfUrl = 'https://www.wilmingtonde.gov' + pdfPath;
@@ -1398,11 +1428,12 @@ async function fetchNashville() {
     }
     console.log('Nashville: Download toolbar btn:', JSON.stringify(dlBtn));
 
-    // Scroll into view if button is near/below viewport bottom
-    await vizFrame.evaluate(function(coords) {
-      window.scrollTo(0, coords.y - 400);
-    }, dlBtn);
-    await page.waitForTimeout(500);
+    // Use scrollIntoView on the element itself so it's in the visible viewport
+    await vizFrame.evaluate(function() {
+      var el = document.querySelector('[data-tb-test-id="viz-viewer-toolbar-button-download"]');
+      if (el) el.scrollIntoView({ behavior: 'instant', block: 'center' });
+    });
+    await page.waitForTimeout(800);
     // Re-fetch coordinates after scroll
     const dlBtnPos = await fEval(function() {
       var el = document.querySelector('[data-tb-test-id="viz-viewer-toolbar-button-download"]')
@@ -1413,7 +1444,11 @@ async function fetchNashville() {
     });
     const clickPos = dlBtnPos || dlBtn;
     console.log('Nashville: clicking Download at', JSON.stringify(clickPos));
-    await page.mouse.click(clickPos.x, clickPos.y);
+    // Use frame locator click instead of page.mouse so coordinates are frame-relative
+    await vizFrame.locator('[data-tb-test-id="viz-viewer-toolbar-button-download"]').click({ timeout: 5000 }).catch(async () => {
+      console.log('Nashville: locator click failed, trying mouse at', clickPos);
+      await page.mouse.click(clickPos.x, clickPos.y);
+    });
     await page.waitForTimeout(1500);
 
     // Find Crosstab in the dropdown menu
