@@ -979,11 +979,16 @@ async function fetchOmaha() {
 
 async function fetchWilmington() {
   const indexUrl = 'https://www.wilmingtonde.gov/government/public-safety/wilmington-police-department/compstat-reports';
-  console.log('Wilmington: fetching index page...');
-  const indexResp = await fetchUrl(indexUrl);
-  if (indexResp.status !== 200) throw new Error('Wilmington index HTTP ' + indexResp.status);
-
-  const html = indexResp.body.toString('utf8');
+  console.log('Wilmington: fetching index page via browser...');
+  const { chromium } = require('playwright');
+  const wBrowser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+  const wPage = await wBrowser.newPage();
+  wPage.setDefaultTimeout(30000);
+  await wPage.goto(indexUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await wPage.waitForTimeout(2000);
+  const html = await wPage.content();
+  await wBrowser.close();
+  console.log('Wilmington: index page length:', html.length);
 
   // Find the most recent CompStat PDF link
   // Links look like: href="/home/showpublisheddocument/NNNN/NNNN"
@@ -1164,7 +1169,7 @@ async function fetchPortland() {
   const { chromium } = require('playwright');
   const browser = await chromium.launch({ headless: true });
   const page    = await browser.newPage();
-  await page.setViewportSize({ width: 1536, height: 900 });
+  await page.setViewportSize({ width: 1536, height: 1200 });
   page.setDefaultTimeout(30000);
 
   const yr = new Date().getFullYear();
@@ -1311,7 +1316,7 @@ async function fetchNashville() {
   const { chromium } = require('playwright');
   const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage();
-  await page.setViewportSize({ width: 1536, height: 900 });
+  await page.setViewportSize({ width: 1536, height: 1200 });
   page.setDefaultTimeout(30000);
 
   console.log('Nashville: loading nashville.gov page...');
@@ -1393,7 +1398,22 @@ async function fetchNashville() {
     }
     console.log('Nashville: Download toolbar btn:', JSON.stringify(dlBtn));
 
-    await page.mouse.click(dlBtn.x, dlBtn.y);
+    // Scroll into view if button is near/below viewport bottom
+    await vizFrame.evaluate(function(coords) {
+      window.scrollTo(0, coords.y - 400);
+    }, dlBtn);
+    await page.waitForTimeout(500);
+    // Re-fetch coordinates after scroll
+    const dlBtnPos = await fEval(function() {
+      var el = document.querySelector('[data-tb-test-id="viz-viewer-toolbar-button-download"]')
+            || Array.from(document.querySelectorAll('[title="Download"],[aria-label="Download"]')).find(function(e){var r=e.getBoundingClientRect();return r.width>0&&r.width<200;});
+      if (!el) return null;
+      var r = el.getBoundingClientRect();
+      return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
+    });
+    const clickPos = dlBtnPos || dlBtn;
+    console.log('Nashville: clicking Download at', JSON.stringify(clickPos));
+    await page.mouse.click(clickPos.x, clickPos.y);
     await page.waitForTimeout(1500);
 
     // Find Crosstab in the dropdown menu
