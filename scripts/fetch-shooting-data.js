@@ -1357,9 +1357,9 @@ async function fetchHartford() {
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
   }
 
-  // Use Playwright to download PDF (site blocks raw HTTP with 403, and direct
-  // PDF URLs trigger browser download rather than navigation — must use
-  // acceptDownloads + waitForEvent('download') to capture the file)
+  // Use Playwright to download PDF.
+  // - context.request.fetch for HEAD: server-side HTTP, bypasses CORS (page.evaluate fetch fails)
+  // - acceptDownloads + waitForEvent('download'): PDF URLs trigger browser download, not navigation
   const { chromium } = require('playwright');
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ acceptDownloads: true });
@@ -1374,15 +1374,11 @@ async function fetchHartford() {
       const url = buildUrl(d);
       console.log('Hartford: trying', url);
       try {
-        // HEAD check first to skip 404s without triggering a download attempt
-        const probe = await page.evaluate(async (u) => {
-          try {
-            const r = await fetch(u, { method: 'HEAD' });
-            return { status: r.status, ct: r.headers.get('content-type') || '' };
-          } catch(e) { return { status: 0, ct: '' }; }
-        }, url);
-        console.log('Hartford:   status=' + probe.status + ' content-type=' + probe.ct);
-        if (probe.status !== 200) continue;
+        // Server-side HEAD check — no CORS, fast 404 detection
+        const probe = await context.request.fetch(url, { method: 'HEAD', timeout: 10000 }).catch(() => null);
+        const probeStatus = probe ? probe.status() : 0;
+        console.log('Hartford:   status=' + probeStatus);
+        if (probeStatus !== 200) continue;
 
         // File exists — intercept the download event
         const [download] = await Promise.all([
@@ -1390,7 +1386,7 @@ async function fetchHartford() {
           page.goto(url, { waitUntil: 'commit', timeout: 30000 }).catch(() => {})
         ]);
         const downloadPath = await download.path();
-        if (!downloadPath) { console.log('Hartford:   download path null, skipping'); continue; }
+        if (!downloadPath) { console.log('Hartford:   download path null'); continue; }
         const body = require('fs').readFileSync(downloadPath);
         if (body.length > 10000 && body[0] === 0x25) {
           pdfBuffer = body;
