@@ -1151,224 +1151,225 @@ async function fetchPortland() {
 
 
 // ─── Nashville (Tableau - Metro Nashville Gunshot Injuries map) ───────────────
-// Dashboard: https://www.nashville.gov/departments/police/crime-statistics
-// Tableau viz with a map download. Set "Offense Report Date" to "Last 3 years",
-// download crosstab (Map sheet) as CSV. Each row = one victim.
-// Filter by year client-side to get YTD vs prior YTD counts.
+// Dashboard: https://www.nashville.gov/departments/police/data-dashboard/gunshot-injuries-map
+// This nashville.gov page embeds Tableau WITH a working download toolbar.
+// Strategy: load page, set filter to "Last 3 years", download Map crosstab CSV,
+// count victims by year client-side for YTD vs prior YTD.
 
 async function fetchNashville() {
-  // Tableau Server (policepublicdata.nashville.gov) doesn't expose a download
-  // toolbar button for this viz. Use Tableau Server's direct CSV download URL:
-  // /views/WorkbookName/SheetName.csv with filter parameters.
-  // Filter param for "Offense Report Date" uses Tableau's URL filter syntax.
-  // Each row = one victim. Count victims by year for YTD vs prior YTD.
-
-  const https = require('https');
-  const fs    = require('fs');
-  const base  = 'https://policepublicdata.nashville.gov/t/Police/views/GunshotInjury/GunshotInjuries';
-
-  // Helper: fetch a single sheet's CSV with redirect following
-  function fetchSheetCSV(sheetName, filterParam) {
-    const url = 'https://policepublicdata.nashville.gov/t/Police/views/GunshotInjury/' +
-                sheetName + '.csv?:showVizHome=no&:embed=true&' + filterParam;
-    console.log('Nashville: fetching', sheetName, ':', url);
-    return new Promise((resolve, reject) => {
-      const doReq = (u, hops) => {
-        if (hops > 5) return reject(new Error('Too many redirects'));
-        const uo = new URL(u);
-        require(uo.protocol === 'https:' ? 'https' : 'http').request(
-          { hostname: uo.hostname, path: uo.pathname + uo.search, method: 'GET',
-            headers: { 'User-Agent': 'Mozilla/5.0' } }, (r) => {
-          if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location)
-            return doReq(new URL(r.headers.location, u).href, hops + 1);
-          const ch = []; r.on('data', c => ch.push(c));
-          r.on('end', () => {
-            const buf = Buffer.concat(ch);
-            const txt = (buf[0]===0xFF&&buf[1]===0xFE) ? buf.toString('utf16le') : buf.toString('utf8');
-            console.log('Nashville:', sheetName, 'HTTP', r.statusCode, 'bytes:', buf.length, 'preview:', txt.substring(0,150));
-            if (r.statusCode !== 200) return reject(new Error('HTTP ' + r.statusCode));
-            resolve(txt);
-          });
-        }).on('error', reject).end();
-      };
-      doReq(url, 0);
-    });
-  }
-
-  // Try Map sheet first (row-level data), fallback to default sheet (aggregated)
-  async function downloadSheetCSV(filterParam) {
-    for (const sheet of ['Map', 'GunshotInjuries']) {
-      try {
-        const csv = await fetchSheetCSV(sheet, filterParam);
-        if (csv.includes('I Rptdt')) { console.log('Nashville: got row-level data from', sheet); return csv; }
-        if (sheet === 'GunshotInjuries') { console.log('Nashville: using aggregated data'); return csv; }
-        console.log('Nashville:', sheet, 'is aggregated format, trying next...');
-      } catch(e) {
-        console.log('Nashville:', sheet, 'failed:', e.message.split('\n')[0]);
-      }
-    }
-    throw new Error('Nashville: all sheet downloads failed');
-  }
-
-  // Parse CSV — handles row-level (Map sheet) or aggregated (default sheet)
-  function parseCSV(csvText) {
-    var lines = csvText.split('\n').map(function(l) { return l.trim(); }).filter(Boolean);
-    if (lines.length < 2) throw new Error('Nashville: CSV too short');
+  function countVictims(csvText, targetYear, mmddCutoff) {
+    var lines = csvText.split('\n').map(l => l.trim()).filter(Boolean);
     var header = lines[0].replace(/^\uFEFF/, '');
     var sep = header.includes('\t') ? '\t' : ',';
-    var cols = header.split(sep).map(function(c) { return c.replace(/"/g,'').trim(); });
-    console.log('Nashville: CSV cols:', cols.slice(0,5).join(' | '), '| rows:', lines.length - 1);
-    // Row-level: I Rptdt column present — count all rows (date filter applied server-side)
-    if (cols.indexOf('I Rptdt') >= 0) {
-      console.log('Nashville: row-level format, count=' + (lines.length - 1));
-      return lines.length - 1;
-    }
-    // Aggregated: fatal_nonfatal + count column
-    var countIdx = cols.length - 1;
-    var fatalCount = 0, nonfatalCount = 0, allCount = 0;
+    var cols = header.split(sep).map(c => c.replace(/"/g,'').trim());
+    var rptdtIdx = cols.indexOf('I Rptdt');
+    if (rptdtIdx < 0) throw new Error('I Rptdt not found. Header: ' + header.substring(0,100));
+    var count = 0, maxDate = null, lastAsof = null;
     for (var i = 1; i < lines.length; i++) {
-      var parts = lines[i].split(sep).map(function(p) { return p.replace(/"/g,'').trim(); });
-      var label = parts[0].toLowerCase();
-      var val = parseInt(parts[countIdx]);
-      if (isNaN(val)) continue;
-      if (label === 'fatal') fatalCount = val;
-      else if (label === 'non-fatal') nonfatalCount = val;
-      else if (label === 'all') allCount = val;
+      var parts = lines[i].split(sep);
+      if (parts.length <= rptdtIdx) continue;
+      var rptdt = parts[rptdtIdx].replace(/"/g,'').trim();
+      if (!rptdt) continue;
+      var dp = rptdt.split(' ')[0].split('/');
+      if (dp.length < 3) continue;
+      var rowYr = parseInt(dp[2]);
+      var rowMm = dp[0].padStart(2,'0');
+      var rowDd = dp[1].padStart(2,'0');
+      if (rowYr !== targetYear) continue;
+      if (mmddCutoff && (rowMm + '/' + rowDd) > mmddCutoff) continue;
+      count++;
+      var d = new Date(rowYr, parseInt(dp[0])-1, parseInt(dp[1]));
+      if (!maxDate || d > maxDate) { maxDate = d; lastAsof = rowYr + '-' + rowMm + '-' + rowDd; }
     }
-    var total = (fatalCount + nonfatalCount > 0) ? fatalCount + nonfatalCount : allCount;
-    console.log('Nashville: aggregated — fatal=' + fatalCount + ' nonfatal=' + nonfatalCount + ' total=' + total);
-    return total;
+    return { count, asof: lastAsof };
   }
 
-  const now    = new Date();
-  const curYr  = now.getFullYear();
+  const now = new Date();
+  const curYr = now.getFullYear();
   const priorYr = curYr - 1;
+  const mmdd = (now.getMonth()+1).toString().padStart(2,'0') + '/' + now.getDate().toString().padStart(2,'0');
 
-  // Try direct CSV download with Tableau URL filters
-  // "Offense Report Date" filter values: "This year", "Last year"
-  // Tableau URL filter syntax: FieldName=Value (URL-encoded)
-  let csvCurrent = null, csvPrior = null;
+  const { chromium } = require('playwright');
+  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+  const page = await browser.newPage();
+  await page.setViewportSize({ width: 1536, height: 900 });
+  page.setDefaultTimeout(30000);
 
-  try {
-    csvCurrent = await downloadSheetCSV('Offense+Report+Date=This+year');
-    console.log('Nashville: current CSV preview:', csvCurrent.substring(0, 300));
-  } catch(e) {
-    console.log('Nashville: current year direct CSV failed:', e.message.split('\n')[0]);
-  }
+  console.log('Nashville: loading nashville.gov page...');
+  await page.goto('https://www.nashville.gov/departments/police/data-dashboard/gunshot-injuries-map',
+    { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(12000);
 
-  try {
-    csvPrior = await downloadSheetCSV('Offense+Report+Date=Last+year');
-    console.log('Nashville: prior CSV preview:', csvPrior.substring(0, 300));
-  } catch(e) {
-    console.log('Nashville: prior year direct CSV failed:', e.message.split('\n')[0]);
-  }
+  // Log interactive elements for diagnosis
+  const pageInfo = await page.evaluate(function() {
+    return Array.from(document.querySelectorAll('*')).filter(function(el) {
+      var r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && (el.innerText||el.getAttribute('aria-label')||'').trim();
+    }).slice(0, 50).map(function(el) {
+      var r = el.getBoundingClientRect();
+      return { tag: el.tagName,
+               text: (el.innerText||'').trim().substring(0,40),
+               label: (el.getAttribute('aria-label')||'').substring(0,40),
+               testId: (el.getAttribute('data-tb-test-id')||''),
+               x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
+    });
+  });
+  console.log('Nashville: page elements:', JSON.stringify(pageInfo.slice(0,25)));
 
-  // Fallback: use Playwright to change filter and download via keyboard shortcut
-  if (!csvCurrent || !csvPrior) {
-    console.log('Nashville: direct CSV failed, trying Playwright fallback...');
-    const { chromium } = require('playwright');
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-    await page.setViewportSize({ width: 1536, height: 900 });
-    page.setDefaultTimeout(30000);
-    const embedUrl = 'https://policepublicdata.nashville.gov/t/Police/views/GunshotInjury/GunshotInjuries?:showVizHome=no&:embed=true&:toolbar=yes&:device=desktop';
+  const dlBtn = await page.evaluate(function() {
+    var el = Array.from(document.querySelectorAll('*')).find(function(e) {
+      var label = (e.getAttribute('aria-label')||e.getAttribute('title')||e.innerText||'').toLowerCase();
+      var r = e.getBoundingClientRect();
+      return label.includes('download') && r.width > 0 && r.height > 0;
+    });
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2),
+             label: el.getAttribute('aria-label')||el.innerText||'' };
+  });
+  console.log('Nashville: download button:', JSON.stringify(dlBtn));
 
-    async function getCSVViaPage(filterText, yearLabel) {
-      await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await page.waitForTimeout(8000);
-
-      // If not current year, click the date filter button to change it
-      if (filterText !== 'This year') {
-        const filterBtn = await page.evaluate(function(target) {
-          var allEls = Array.from(document.querySelectorAll('*'));
-          var btn = allEls.find(function(el) {
-            return (el.innerText || '').trim() === 'This year' &&
-                   el.tagName === 'BUTTON' && el.className.includes('dijit');
-          });
-          if (!btn) return null;
-          var r = btn.getBoundingClientRect();
-          return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) };
-        }, filterText);
-
-        if (filterBtn) {
-          // Click the dropdown arrow (slightly to the right of button center)
-          await page.mouse.click(filterBtn.x + 10, filterBtn.y);
-          await page.waitForTimeout(2000);
-          // Log all new elements that appeared
-          const newEls = await page.evaluate(function() {
-            return Array.from(document.querySelectorAll('.dijitPopup *, .dijitMenuItemLabel, [class*="MenuItem"]')).map(function(el) {
-              return { tag: el.tagName, cls: (typeof el.className==='string'?el.className:'').substring(0,60), text: (el.innerText||'').trim().substring(0,40) };
-            }).filter(function(e) { return e.text; }).slice(0,20);
-          });
-          console.log('Nashville: popup items after filter click:', JSON.stringify(newEls));
-
-          // Try to find and click the target option
-          const optResult = await page.evaluate(function(target) {
-            var allEls = Array.from(document.querySelectorAll('*'));
-            var opt = allEls.find(function(el) {
-              var t = (el.innerText || '').trim();
-              return t === target && el.className && (typeof el.className === 'string') &&
-                     (el.className.includes('dijit') || el.className.includes('Menu'));
-            });
-            if (!opt) {
-              // Broader search
-              opt = allEls.find(function(el) { return (el.innerText||'').trim() === target; });
-            }
-            if (!opt) return null;
-            var r = opt.getBoundingClientRect();
-            return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2), cls: (typeof opt.className==='string'?opt.className:'').substring(0,60) };
-          }, filterText);
-          console.log('Nashville:', filterText, 'option:', JSON.stringify(optResult));
-          if (optResult) {
-            await page.mouse.click(optResult.x, optResult.y);
-            await page.waitForTimeout(4000);
-          }
-        }
-      }
-
-      // Try Ctrl+Shift+D or other keyboard shortcuts to trigger download
-      // Or try the viewData URL from the page context
-      const viewDataUrl = await page.evaluate(function() {
-        // Look for any download-related URLs in the page
-        var scripts = Array.from(document.querySelectorAll('script')).map(function(s) { return s.src || ''; }).filter(Boolean);
-        return { origin: window.location.origin, href: window.location.href };
-      });
-      console.log('Nashville: page context:', JSON.stringify(viewDataUrl));
-
-      // As last resort, read the Gunshot Victim Counts from the DOM
-      const countText = await page.evaluate(function() {
-        var allEls = Array.from(document.querySelectorAll('*'));
-        var el = allEls.find(function(e) { return (e.innerText||'').includes('Gunshot Victim Counts'); });
-        return el ? el.innerText.substring(0, 300) : null;
-      });
-      console.log('Nashville:', yearLabel, 'victim counts text:', countText);
-      return null; // CSV not available via Playwright
-    }
-
-    if (!csvCurrent) await getCSVViaPage('This year', 'current');
-    if (!csvPrior)   await getCSVViaPage('Last year', 'prior');
+  if (!dlBtn) {
+    const frames = page.frames();
+    console.log('Nashville: frames:', frames.length, frames.map(f => f.url()).slice(0,5));
     await browser.close();
+    throw new Error('Nashville: download button not found — see page elements log above');
   }
 
-  if (!csvCurrent && !csvPrior) {
-    throw new Error('Nashville: could not obtain CSV data via any method');
+  // Set filter to "Last 3 years"
+  const filterBtn = await page.evaluate(function() {
+    var el = Array.from(document.querySelectorAll('*')).find(function(e) {
+      var t = (e.innerText||'').trim();
+      var r = e.getBoundingClientRect();
+      return (t === 'This year' || t === 'This Year') && r.width > 0 && r.height > 0;
+    });
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
+  });
+  if (filterBtn) {
+    console.log('Nashville: clicking date filter...');
+    await page.mouse.click(filterBtn.x, filterBtn.y);
+    await page.waitForTimeout(2000);
+    const lastThreeOpt = await page.evaluate(function() {
+      var el = Array.from(document.querySelectorAll('*')).find(function(e) {
+        var t = (e.innerText||'').trim();
+        var r = e.getBoundingClientRect();
+        return (t === 'Last 3 years' || t === 'Last 3 Years') && r.width > 0 && r.height > 0;
+      });
+      if (!el) return null;
+      var r = el.getBoundingClientRect();
+      return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
+    });
+    if (lastThreeOpt) {
+      console.log('Nashville: selecting "Last 3 years"');
+      await page.mouse.click(lastThreeOpt.x, lastThreeOpt.y);
+      await page.waitForTimeout(5000);
+    } else {
+      console.log('Nashville: "Last 3 years" not found in dropdown');
+    }
+  } else {
+    console.log('Nashville: date filter not found, proceeding as-is');
   }
 
-  // Parse counts from summary CSV format
-  let ytd = null, prior = null, asof = null;
-  if (csvCurrent) {
-    ytd = parseCSV(csvCurrent);
-    // asof not available in summary format — use today's date as proxy
-    const now2 = new Date();
-    asof = now2.getFullYear() + '-' + (now2.getMonth()+1).toString().padStart(2,'0') + '-' + now2.getDate().toString().padStart(2,'0');
-    console.log('Nashville: current ytd=' + ytd + ' asof=' + asof);
-  }
-  if (csvPrior) {
-    prior = parseCSV(csvPrior);
-    console.log('Nashville: prior=' + prior);
+  // Click Download toolbar button
+  const downloadPromise = page.waitForEvent('download', { timeout: 25000 }).catch(() => null);
+  await page.mouse.click(dlBtn.x, dlBtn.y);
+  await page.waitForTimeout(1500);
+
+  // Click Crosstab
+  const crosstabBtn = await page.evaluate(function() {
+    var el = Array.from(document.querySelectorAll('*')).find(function(e) {
+      var t = (e.innerText||'').trim().toLowerCase();
+      var r = e.getBoundingClientRect();
+      return t === 'crosstab' && r.width > 0 && r.height > 0;
+    });
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
+  });
+  console.log('Nashville: crosstab:', JSON.stringify(crosstabBtn));
+  if (!crosstabBtn) { await browser.close(); throw new Error('Nashville: Crosstab not found in download menu'); }
+  await page.mouse.click(crosstabBtn.x, crosstabBtn.y);
+  await page.waitForTimeout(1000);
+
+  // Select Map sheet in dialog
+  const mapSheet = await page.evaluate(function() {
+    var el = Array.from(document.querySelectorAll('*')).find(function(e) {
+      var t = (e.innerText||'').trim();
+      var r = e.getBoundingClientRect();
+      return t === 'Map' && r.width > 0 && r.height > 0 &&
+             (e.tagName === 'LI' || e.tagName === 'LABEL' || e.tagName === 'INPUT' ||
+              (typeof e.className==='string' && (e.className.includes('sheet')||e.className.includes('tab')||e.className.includes('item'))));
+    }) || Array.from(document.querySelectorAll('*')).find(function(e) {
+      var t = (e.innerText||'').trim();
+      var r = e.getBoundingClientRect();
+      return t === 'Map' && r.width > 0 && r.height > 0;
+    });
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2), tag: el.tagName };
+  });
+  console.log('Nashville: Map sheet:', JSON.stringify(mapSheet));
+  if (mapSheet) {
+    await page.mouse.click(mapSheet.x, mapSheet.y);
+    await page.waitForTimeout(500);
+  } else {
+    const dialogItems = await page.evaluate(function() {
+      return Array.from(document.querySelectorAll('*')).filter(function(e) {
+        var r = e.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && (e.innerText||'').trim().length > 0 && (e.innerText||'').trim().length < 60;
+      }).slice(0, 30).map(function(e) {
+        return { tag: e.tagName, text: (e.innerText||'').trim(), cls: (e.className||'').substring(0,50) };
+      });
+    });
+    console.log('Nashville: dialog items (Map not found):', JSON.stringify(dialogItems));
   }
 
-  if (ytd === null || prior === null) throw new Error('Nashville: missing data ytd=' + ytd + ' prior=' + prior);
-  if (ytd === 0 && prior === 0) throw new Error('Nashville: all zeros');
-  return { ytd, prior, asof };
+  // Select CSV
+  const csvOpt = await page.evaluate(function() {
+    var el = Array.from(document.querySelectorAll('*')).find(function(e) {
+      var t = (e.innerText||'').trim().toUpperCase();
+      var r = e.getBoundingClientRect();
+      return t === 'CSV' && r.width > 0 && r.height > 0;
+    });
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
+  });
+  if (csvOpt) { await page.mouse.click(csvOpt.x, csvOpt.y); await page.waitForTimeout(500); }
+
+  // Click Download in dialog
+  const dlDialog = await page.evaluate(function() {
+    var el = Array.from(document.querySelectorAll('button, a')).find(function(e) {
+      var t = (e.innerText||'').trim();
+      var r = e.getBoundingClientRect();
+      return t === 'Download' && r.width > 0 && r.height > 0;
+    });
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
+  });
+  console.log('Nashville: dialog Download:', JSON.stringify(dlDialog));
+  if (dlDialog) { await page.mouse.click(dlDialog.x, dlDialog.y); }
+
+  const dl = await downloadPromise;
+  if (!dl) { await browser.close(); throw new Error('Nashville: no download event received'); }
+
+  const buf = await new Promise((res, rej) => {
+    dl.createReadStream().then(s => {
+      const ch = []; s.on('data', c => ch.push(c)); s.on('end', () => res(Buffer.concat(ch))); s.on('error', rej);
+    });
+  });
+  const csvData = (buf[0]===0xFF && buf[1]===0xFE) ? buf.toString('utf16le') : buf.toString('utf8');
+  console.log('Nashville: CSV bytes:', buf.length, 'preview:', csvData.substring(0, 200));
+
+  await browser.close();
+
+  if (!csvData.includes('I Rptdt')) throw new Error('Nashville: wrong CSV format. Preview: ' + csvData.substring(0, 200));
+
+  const rCurr  = countVictims(csvData, curYr, null);
+  const rPrior = countVictims(csvData, priorYr, mmdd);
+  console.log('Nashville: ytd=' + rCurr.count + ' prior=' + rPrior.count + ' asof=' + rCurr.asof);
+  return { ytd: rCurr.count, prior: rPrior.count, asof: rCurr.asof };
 }
