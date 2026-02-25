@@ -1049,9 +1049,6 @@ async function main() {
       });
   }
 
-  // Omaha is manual — preserve existing
-  results.omaha = existing.omaha || { ok: false, error: 'No manual data yet' };
-
   // Run all fetches in parallel
   console.log('Starting all fetches in parallel...');
   const fetches = await Promise.all([
@@ -1068,6 +1065,7 @@ async function main() {
     safe('Hartford',   fetchHartford,   60000),
     safe('Denver',     fetchDenver,     120000),
     safe('Portsmouth', fetchPortsmouth, 120000),
+    safe('Omaha',      fetchOmaha,      60000),
   ]);
 
   for (const { key, value } of fetches) {
@@ -1328,8 +1326,11 @@ async function fetchPortsmouth() {
     '1. The TOTAL number shown at the very top (dashed orange line) - this is the largest/highest number for each year',
     '2. The purple Fatal (Suicide) number - this is usually the smallest number, at the bottom',
     '',
+    'Also look for any date indicator like "Last Updated" or a date range on the page.',
+    '',
     'Reply ONLY in this exact format:',
-    yr + '_TOTAL=N ' + yr + '_SUICIDE=N ' + (yr-1) + '_TOTAL=N ' + (yr-1) + '_SUICIDE=N'
+    yr + '_TOTAL=N ' + yr + '_SUICIDE=N ' + (yr-1) + '_TOTAL=N ' + (yr-1) + '_SUICIDE=N ASOF=YYYY-MM-DD',
+    'If you cannot find a date, omit ASOF.'
   ].join('\n');
 
   const body = JSON.stringify({
@@ -1386,6 +1387,12 @@ async function fetchPortsmouth() {
   // YTD = Total minus Suicide
   const ytd = (ytdTotal && ytdSui) ? parseInt(ytdTotal[1]) - parseInt(ytdSui[1]) : null;
   const prior = (prTotal && prSui) ? parseInt(prTotal[1]) - parseInt(prSui[1]) : null;
+
+  // Extract ASOF from vision response if DOM parsing missed it
+  if (!asof) {
+    const asofV = visionText.match(/ASOF=(\d{4}-\d{2}-\d{2})/);
+    if (asofV) asof = asofV[1];
+  }
 
   console.log('Portsmouth final: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
   if (ytd === null || prior === null) throw new Error('Portsmouth: vision parse failed: ' + visionText);
