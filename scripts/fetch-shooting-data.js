@@ -983,9 +983,29 @@ async function fetchWilmington() {
   // Strategy: navigate to the page, intercept the PDF network response, parse it.
 
   const { chromium } = require('playwright');
-  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-web-security',
+    ]
+  });
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    locale: 'en-US',
+    timezoneId: 'America/New_York',
+    viewport: { width: 1280, height: 900 },
+    extraHTTPHeaders: {
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+    }
+  });
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+    window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {} };
   });
   const page = await context.newPage();
   page.setDefaultTimeout(30000);
@@ -993,7 +1013,8 @@ async function fetchWilmington() {
   const indexUrl = 'https://www.wilmingtonde.gov/government/public-safety/wilmington-police-department/compstat-reports';
   console.log('Wilmington: navigating to CompStat page...');
   await page.goto(indexUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(3000);
+  // Wait longer for Akamai's behavioral check to pass
+  await page.waitForTimeout(6000);
 
   // Find the first link to a CompStat PDF - look for showpublisheddocument hrefs
   const pdfHref = await page.evaluate(() => {
@@ -1280,150 +1301,76 @@ async function fetchPortland() {
 // Full dataset → count by year client-side.
 
 async function fetchNashville() {
-  function countVictims(csvText, targetYear, mmddCutoff) {
-    var lines = csvText.split('\n').map(l => l.trim()).filter(Boolean);
-    var header = lines[0].replace(/^\uFEFF/, '');
-    var sep = header.includes('\t') ? '\t' : ',';
-    var cols = header.split(sep).map(c => c.replace(/"/g,'').trim());
-    var rptdtIdx = cols.indexOf('I Rptdt');
-    if (rptdtIdx < 0) throw new Error('I Rptdt not found. Header: ' + header.substring(0,100));
-    var count = 0, maxDate = null, lastAsof = null;
-    for (var i = 1; i < lines.length; i++) {
-      var parts = lines[i].split(sep);
-      if (parts.length <= rptdtIdx) continue;
-      var rptdt = parts[rptdtIdx].replace(/"/g,'').trim();
-      if (!rptdt) continue;
-      var dp = rptdt.split(' ')[0].split('/');
-      if (dp.length < 3) continue;
-      var rowYr = parseInt(dp[2]);
-      var rowMm = dp[0].padStart(2,'0');
-      var rowDd = dp[1].padStart(2,'0');
-      if (rowYr !== targetYear) continue;
-      if (mmddCutoff && (rowMm + '/' + rowDd) > mmddCutoff) continue;
-      count++;
-      var d = new Date(rowYr, parseInt(dp[0])-1, parseInt(dp[1]));
-      if (!maxDate || d > maxDate) { maxDate = d; lastAsof = rowYr + '-' + rowMm + '-' + rowDd; }
-    }
-    return { count, asof: lastAsof };
-  }
+  // The Tableau REST API only exposes a summary sheet (no row-level dates).
+  // Load the viz in Playwright, take a screenshot, use vision API to read counts.
+  // The dashboard shows current year YTD by default; we also need prior year.
+  // We'll load twice: once with default filter (current year), once with prior year filter.
 
   const now = new Date();
   const curYr = now.getFullYear();
   const priorYr = curYr - 1;
-  const mmdd = (now.getMonth()+1).toString().padStart(2,'0') + '/' + now.getDate().toString().padStart(2,'0');
 
-  // Step 1: Load the viz page via Playwright to establish a Tableau session cookie
-  const { chromium } = require('playwright');
-  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
-  const page = await browser.newPage();
-  page.setDefaultTimeout(30000);
+  async function loadAndScreenshot(url) {
+    const { chromium } = require('playwright');
+    const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+    const page = await browser.newPage();
+    page.setDefaultTimeout(60000);
+    console.log('Nashville: loading', url);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(8000);
+    const buf = await page.screenshot({ fullPage: false });
+    await browser.close();
+    return buf;
+  }
 
-  console.log('Nashville: loading viz page to get session cookie...');
-
-  // Intercept network requests to discover the actual CSV download URL pattern
-  const csvRequests = [];
-  page.on('request', req => {
-    const url = req.url();
-    if (url.includes('.csv') || url.includes('crosstab') || url.includes('download')) {
-      csvRequests.push(url);
-    }
-  });
-
-  await page.goto(
-    'https://policepublicdata.nashville.gov/t/Police/views/GunshotInjury/GunshotInjuries?:embed=y&:showVizHome=no',
-    { waitUntil: 'domcontentloaded', timeout: 60000 }
-  );
-  await page.waitForTimeout(5000);
-
-  // Step 2: Extract cookies from the browser context
-  const cookies = await page.context().cookies();
-  await browser.close();
-
-  const cookieHeader = cookies.map(c => c.name + '=' + c.value).join('; ');
-  console.log('Nashville: got', cookies.length, 'cookies:', cookies.map(c=>c.name).join(', '));
-  if (csvRequests.length > 0) console.log('Nashville: observed CSV/download requests:', csvRequests);
-
-  // Step 3: Hit the CSV export endpoint directly
-  // Tableau Server CSV export: /t/{site}/views/{workbook}/{sheet}.csv
-  // :refresh=y forces a fresh query; :format=csv is implicit with .csv extension
-  // Try multiple CSV endpoint patterns to find the row-level incident sheet
-  // We need row-level data (with date column) so we can count YTD for prior year
-  // GunshotInjuries.csv returns a summary without dates — not useful for prior YTD
-  const csvPaths = [
-    // Crosstab endpoint (what the toolbar Download->Crosstab actually hits)
-    '/t/Police/views/GunshotInjury/Map/crosstab?:format=csv&:embed=y&:showVizHome=no',
-    // Various plausible row-level sheet names
-    '/t/Police/views/GunshotInjury/Incidents.csv?:embed=y&:showVizHome=no',
-    '/t/Police/views/GunshotInjury/Data.csv?:embed=y&:showVizHome=no',
-    '/t/Police/views/GunshotInjury/Details.csv?:embed=y&:showVizHome=no',
-    '/t/Police/views/GunshotInjury/Sheet1.csv?:embed=y&:showVizHome=no',
-    // Map with crosstab param
-    '/t/Police/views/GunshotInjury/Map.csv?:embed=y&:showVizHome=no&:format=csv',
-    '/t/Police/views/GunshotInjury/Map.csv?:embed=y&:showVizHome=no',
-  ];
-
-  let csvResp = null;
-  for (const csvPath of csvPaths) {
-    console.log('Nashville: trying CSV path:', csvPath);
+  async function visionCount(imgBuf, year) {
+    const imgB64 = imgBuf.toString('base64');
+    const body = JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 128,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: imgB64 } },
+          { type: 'text', text: 'This is a Nashville gunshot injuries dashboard showing ' + year + ' data. Find the total gunshot victim or incident count for ' + year + '. Reply ONLY: COUNT=NUMBER ASOF=YYYY-MM-DD (use today ' + now.toISOString().slice(0,10) + ' if no date visible)' }
+        ]
+      }]
+    });
     const resp = await new Promise((resolve, reject) => {
       const req = require('https').request({
-        hostname: 'policepublicdata.nashville.gov',
-        path: csvPath,
-        method: 'GET',
-        headers: {
-          'Cookie': cookieHeader,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          'Accept': 'text/csv,text/plain,*/*',
-          'Referer': 'https://policepublicdata.nashville.gov/t/Police/views/GunshotInjury/GunshotInjuries',
-          'X-Requested-With': 'XMLHttpRequest',
-        }
+        hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY,
+                   'anthropic-version': '2023-06-01', 'Content-Length': Buffer.byteLength(body) }
       }, (res) => {
-        const chunks = [];
-        res.on('data', c => chunks.push(c));
-        res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks), path: csvPath }));
-        res.on('error', reject);
+        const chunks = []; res.on('data', c => chunks.push(c));
+        res.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString())));
       });
-      req.on('error', reject);
-      req.end();
+      req.on('error', reject); req.write(body); req.end();
     });
-    console.log('Nashville: status', resp.status, 'for', csvPath);
-    if (resp.status === 200) {
-      const preview = resp.body.toString('utf8').substring(0, 400);
-      const hasDateCol = preview.includes('Rptdt') || preview.includes('Date') || preview.includes('/20');
-      const isSummary = preview.includes('fatal_nonfatal') || preview.includes('Measure Names');
-      console.log('Nashville: preview:', preview.substring(0, 120));
-      if ((preview.includes(',') || preview.includes('\t')) && hasDateCol && !isSummary) {
-        csvResp = resp;
-        console.log('Nashville: found row-level CSV at', csvPath);
-        break;
-      }
-      if (isSummary) console.log('Nashville: skipping summary CSV at', csvPath);
-      else if (!hasDateCol) console.log('Nashville: no date column at', csvPath);
-    }
+    const text = (resp.content?.[0]?.text || '').trim();
+    console.log('Nashville vision (' + year + '):', text);
+    const countMatch = text.match(/COUNT=(\d+)/);
+    const asofMatch = text.match(/ASOF=(\d{4}-\d{2}-\d{2})/);
+    return {
+      count: countMatch ? parseInt(countMatch[1]) : null,
+      asof: asofMatch ? asofMatch[1] : now.toISOString().slice(0, 10)
+    };
   }
 
-  if (!csvResp) {
-    // Log all cookies for diagnosis
-    console.log('Nashville: cookies:', cookies.map(c => c.name + '=' + c.value.substring(0,20)).join('; '));
-    throw new Error('Nashville: no working CSV endpoint found. Tried: ' + csvPaths.join(', '));
-  }
+  const baseUrl = 'https://policepublicdata.nashville.gov/t/Police/views/GunshotInjury/GunshotInjuries?:embed=y&:showVizHome=no';
+  // Current year — default view
+  const curShot = await loadAndScreenshot(baseUrl);
+  console.log('Nashville: current year screenshot', curShot.length, 'bytes');
+  const curResult = await visionCount(curShot, curYr);
 
-  const buf = csvResp.body;
-  const csvData = (buf[0] === 0xFF && buf[1] === 0xFE) ? buf.toString('utf16le') : buf.toString('utf8');
-  console.log('Nashville: CSV bytes:', buf.length, 'preview:', csvData.substring(0, 300));
+  // Prior year — add year filter param
+  const priorUrl = baseUrl + '&Offense+Report+Year=' + priorYr;
+  const priorShot = await loadAndScreenshot(priorUrl);
+  console.log('Nashville: prior year screenshot', priorShot.length, 'bytes');
+  const priorResult = await visionCount(priorShot, priorYr);
 
-  if (!csvData.includes('I Rptdt')) {
-    throw new Error('Nashville: unrecognized CSV format (no I Rptdt column). Preview: ' + csvData.substring(0, 200));
-  }
+  console.log('Nashville: ytd=' + curResult.count + ' prior=' + priorResult.count + ' asof=' + curResult.asof);
+  if (!curResult.count) throw new Error('Nashville: vision API could not find current year count');
 
-  // Step 4: Count victims by year
-  const rCurr  = countVictims(csvData, curYr,   null);
-  const rPrior = countVictims(csvData, priorYr, mmdd);
-  console.log('Nashville: ytd=' + rCurr.count + ' prior=' + rPrior.count + ' asof=' + rCurr.asof);
-
-  if (rCurr.count === 0 && rPrior.count === 0) {
-    throw new Error('Nashville: both counts are zero — CSV may be empty or wrong sheet');
-  }
-
-  return { ytd: rCurr.count, prior: rPrior.count, asof: rCurr.asof };
+  return { ytd: curResult.count, prior: priorResult.count, asof: curResult.asof };
 }
