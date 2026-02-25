@@ -1144,25 +1144,27 @@ async function fetchPortland() {
   // Row order: HomicideVictims, HomFirearmVictims, HomFirearmIncidents, NonFatalInjury, NonInjury, Total
   // We sum HomFirearmIncidents + NonFatalInjury = Shooting Incidents (Portland definition)
   const { chromium } = require('playwright');
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
   const page    = await browser.newPage();
   await page.setViewportSize({ width: 1536, height: 1200 });
-  page.setDefaultTimeout(30000);
+  page.setDefaultTimeout(90000);
 
-  const yr = new Date().getFullYear();
   const embedUrl = 'https://public.tableau.com/views/GunViolenceTrendsReport/YeartoDateRollingYearStatistics?:showVizHome=no&:embed=true';
   console.log('Portland: loading Gun Violence Trends Report YTD sheet...');
-  await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.goto(embedUrl, { waitUntil: 'networkidle', timeout: 90000 }).catch(() => {});
 
   // Wait for table to render — poll for text content stabilizing
   let bodyText = '';
-  for (var w = 0; w < 10; w++) {
-    await page.waitForTimeout(3000);
+  for (var w = 0; w < 15; w++) {
+    await page.waitForTimeout(4000);
     bodyText = await page.evaluate(function() { return document.body.innerText; });
     if (bodyText.includes('Total Shooting Incidents') && bodyText.length > 2000) break;
     console.log('Portland: waiting for render... attempt', (w+1), 'len:', bodyText.length);
   }
   console.log('Portland: body length after wait:', bodyText.length);
+  if (bodyText.length < 3000) {
+    console.log('Portland: body snippet (first 500):', bodyText.substring(0, 500));
+  }
 
   // Parse asof from "Current Year to Date: January 1, YYYY - Month D, YYYY"
   let asof = null;
@@ -1328,33 +1330,46 @@ async function fetchNashville() {
 
   // Set the "Last N months" spinner value and wait for the viz to re-render
   async function setLastNMonths(n) {
-    // The spinner input should be visible after opening the filter
-    // Try to find it and set value
-    const set = await page.evaluate((n) => {
-      // Look for number input near "Last" text
+    // Tableau uses controlled React inputs — must use real Playwright keyboard events
+    // First log current spinner state for debugging
+    const spinnerInfo = await page.evaluate(() => {
       const inputs = Array.from(document.querySelectorAll('input[type="number"], input[type="text"]'));
-      const spinner = inputs.find(i => {
-        const val = i.value;
-        return /^\d+$/.test(val) && parseInt(val) >= 1 && parseInt(val) <= 24;
-      });
-      if (spinner) {
-        spinner.focus();
-        spinner.value = String(n);
-        spinner.dispatchEvent(new Event('input', { bubbles: true }));
-        spinner.dispatchEvent(new Event('change', { bubbles: true }));
-        return true;
-      }
-      return false;
-    }, n);
-
-    if (set) {
-      // Press Enter/Tab to apply
-      await page.keyboard.press('Tab');
-      await page.waitForTimeout(3000);
-    } else {
-      console.log('Nashville: could not find spinner for N=' + n);
+      const spinner = inputs.find(i => /^\d+$/.test((i.value || '').trim()) && parseInt(i.value) >= 1 && parseInt(i.value) <= 36);
+      if (!spinner) return { found: false, allInputs: inputs.map(i => ({ type: i.type, value: i.value, id: i.id })) };
+      return { found: true, value: spinner.value };
+    });
+    if (n === 1 || !spinnerInfo.found) {
+      console.log('Nashville: spinner info for N=' + n + ':', JSON.stringify(spinnerInfo));
     }
-    return set;
+    if (!spinnerInfo.found) return false;
+
+    // Find the spinner via Playwright and use real keyboard interaction
+    const allInputs = await page.locator('input').all();
+    let targetInput = null;
+    for (const inp of allInputs) {
+      try {
+        const val = await inp.inputValue();
+        if (/^\d+$/.test(val.trim()) && parseInt(val) >= 1 && parseInt(val) <= 36) {
+          targetInput = inp;
+          break;
+        }
+      } catch(e) {}
+    }
+
+    if (!targetInput) {
+      console.log('Nashville: could not locate spinner input via Playwright for N=' + n);
+      return false;
+    }
+
+    // Triple-click to select all, then type new value, then Enter to apply
+    await targetInput.click({ clickCount: 3 });
+    await targetInput.type(String(n));
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(4000);
+
+    const newVal = await targetInput.inputValue().catch(() => '?');
+    if (n <= 3 || n % 5 === 0) console.log('Nashville: after N=' + n + ', spinner=' + newVal);
+    return true;
   }
 
   // Read the current Fatal + NonFatal count from a screenshot
