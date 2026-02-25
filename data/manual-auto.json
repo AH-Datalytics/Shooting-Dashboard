@@ -10,73 +10,73 @@
     "ytd": 34,
     "prior": 50,
     "asof": "2026-02-19",
-    "fetchedAt": "2026-02-25T02:31:46.399Z",
+    "fetchedAt": "2026-02-25T02:37:53.131Z",
     "ok": true
   },
   "durham": {
     "ytd": 16,
     "prior": 20,
     "asof": "2026-02-21",
-    "fetchedAt": "2026-02-25T02:31:46.399Z",
+    "fetchedAt": "2026-02-25T02:37:53.131Z",
     "ok": true
   },
   "milwaukee": {
     "ytd": 46,
     "prior": 56,
     "asof": "2026-02-23",
-    "fetchedAt": "2026-02-25T02:31:46.399Z",
+    "fetchedAt": "2026-02-25T02:37:53.131Z",
     "ok": true
   },
   "memphis": {
     "ytd": 70,
     "prior": 97,
     "asof": "2026-02-24",
-    "fetchedAt": "2026-02-25T02:31:46.399Z",
+    "fetchedAt": "2026-02-25T02:37:53.131Z",
     "ok": true
   },
   "hampton": {
     "ytd": 0,
     "prior": 4,
     "asof": "2025-01-31",
-    "fetchedAt": "2026-02-25T02:31:46.399Z",
+    "fetchedAt": "2026-02-25T02:37:53.131Z",
     "ok": true
   },
   "miamidade": {
     "ytd": 15,
     "prior": 27,
     "asof": "2026-02-20",
-    "fetchedAt": "2026-02-25T02:31:46.399Z",
+    "fetchedAt": "2026-02-25T02:37:53.131Z",
     "ok": true
   },
   "pittsburgh": {
     "ytd": 10,
     "prior": 12,
     "asof": "2026-02-24",
-    "fetchedAt": "2026-02-25T02:31:46.399Z",
+    "fetchedAt": "2026-02-25T02:37:53.131Z",
     "ok": true
   },
   "portland": {
     "ytd": 9,
     "prior": 13,
     "asof": null,
-    "fetchedAt": "2026-02-25T02:31:46.399Z",
+    "fetchedAt": "2026-02-25T02:37:53.131Z",
     "ok": true
   },
   "buffalo": {
     "ytd": 39,
     "prior": 48,
     "asof": "2026-01-31",
-    "fetchedAt": "2026-02-25T02:31:46.399Z",
+    "fetchedAt": "2026-02-25T02:37:53.131Z",
     "ok": true
   },
   "nashville": {
     "ok": false,
-    "error": "Nashville: wrong CSV format (no I Rptdt column). Preview: fatal_nonfatal,Measure Names,Count of tab_incident_pt1_victim_gunshot\r\nFatal,No Measure Value,5\r\nNon-Fatal,No Measure Value,28\r\nAll,No Measure Value,33\r\n",
-    "fetchedAt": "2026-02-25T02:31:46.399Z"
+    "error": "Nashville: no working CSV endpoint found. Tried: /t/Police/views/GunshotInjury/Map/crosstab?:format=csv&:embed=y&:showVizHome=no, /t/Police/views/GunshotInjury/Incidents.csv?:embed=y&:showVizHome=no, /t/Police/views/GunshotInjury/Data.csv?:embed=y&:showVizHome=no, /t/Police/views/GunshotInjury/Details.csv?:embed=y&:showVizHome=no, /t/Police/views/GunshotInjury/Sheet1.csv?:embed=y&:showVizHome=no, /t/Police/views/GunshotInjury/Map.csv?:embed=y&:showVizHome=no&:format=csv, /t/Police/views/GunshotInjury/Map.csv?:embed=y&:showVizHome=no",
+    "fetchedAt": "2026-02-25T02:37:53.131Z"
   },
   "wilmington": {
     "ok": false,
-    "error": "Wilmington: could not find PDF via index page or doc ID scan (tried 8290-8330)",
-    "fetchedAt": "2026-02-25T02:31:46.399Z"
+    "error": "Wilmington: no PDF link found on CompStat page",
+    "fetchedAt": "2026-02-25T02:37:53.131Z"
   }
 }
