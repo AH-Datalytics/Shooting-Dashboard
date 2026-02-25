@@ -1221,7 +1221,28 @@ async function fetchNashville() {
       var r = btn.getBoundingClientRect();
       return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2), label: btn.getAttribute('aria-label') };
     });
-    if (!dlBtn) throw new Error('Download toolbar button not found');
+    if (!dlBtn) {
+      // Log all visible interactive elements for diagnosis
+      const allInteractive = await page.evaluate(function() {
+        return Array.from(document.querySelectorAll('*')).filter(function(el) {
+          var r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0 && (
+            el.tagName === 'BUTTON' || el.tagName === 'A' ||
+            el.getAttribute('role') === 'button' ||
+            el.getAttribute('data-tb-test-id') ||
+            (typeof el.className === 'string' && (el.className.includes('toolbar') || el.className.includes('Toolbar')))
+          );
+        }).map(function(el) {
+          var r = el.getBoundingClientRect();
+          return { tag: el.tagName, testId: el.getAttribute('data-tb-test-id'),
+                   label: el.getAttribute('aria-label'), title: el.getAttribute('title'),
+                   cls: (typeof el.className==='string'?el.className:'').substring(0,60),
+                   text: (el.innerText||'').trim().substring(0,30),
+                   x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
+        }).slice(0, 40);
+      });
+      throw new Error('Nashville: Download btn not found. Interactive els: ' + JSON.stringify(allInteractive));
+    }
     console.log('Nashville: download btn for ' + label + ':', JSON.stringify(dlBtn));
     await page.mouse.click(dlBtn.x, dlBtn.y);
     await page.waitForTimeout(1500);
@@ -1329,20 +1350,48 @@ async function fetchNashville() {
   // ── Step 3: Change filter to "Last year", download prior year CSV ──────────
   let csvPrior = null;
   try {
-    // Find and click the date filter combo
+    // Date filter is a single-value list. From page text we know "This year" is visible.
+    // Find it and click to open/toggle, then click "Last year".
     console.log('Nashville: switching filter to Last year...');
-    const comboResult = await findAndClickCombo('offense report date');
-    console.log('Nashville: date combo result:', JSON.stringify(comboResult));
-    await page.waitForTimeout(2000);
 
-    // Click "Last year" option
-    const optResult = await clickOption('Last year');
-    console.log('Nashville: Last year option:', JSON.stringify(optResult));
-    if (!optResult.found) {
-      // Log what options are available
-      console.log('Nashville: available options:', JSON.stringify(optResult.items));
+    // First: log all visible text elements that could be the filter
+    const filterCandidates = await page.evaluate(function() {
+      var allEls = Array.from(document.querySelectorAll('*'));
+      return allEls.filter(function(el) {
+        var t = (el.innerText || '').trim();
+        var r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && (
+          t === 'This year' || t === 'Last year' || t === 'Last 3 years' ||
+          t === 'This Year' || t === 'Last Year'
+        );
+      }).map(function(el) {
+        var r = el.getBoundingClientRect();
+        return { tag: el.tagName, cls: (typeof el.className==='string'?el.className:'').substring(0,80),
+                 text: (el.innerText||'').trim(), role: el.getAttribute('role'),
+                 x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
+      });
+    });
+    console.log('Nashville: date filter candidates:', JSON.stringify(filterCandidates));
+
+    // Click "Last year" directly if visible, otherwise click "This year" to open then "Last year"
+    var lastYearEl = filterCandidates.find(function(c) { return c.text === 'Last year' || c.text === 'Last Year'; });
+    if (lastYearEl) {
+      console.log('Nashville: clicking Last year directly at', lastYearEl.x, lastYearEl.y);
+      await page.mouse.click(lastYearEl.x, lastYearEl.y);
+      await page.waitForTimeout(3000);
+    } else {
+      var thisYearEl = filterCandidates.find(function(c) { return c.text === 'This year' || c.text === 'This Year'; });
+      if (thisYearEl) {
+        console.log('Nashville: clicking This year to open filter at', thisYearEl.x, thisYearEl.y);
+        await page.mouse.click(thisYearEl.x, thisYearEl.y);
+        await page.waitForTimeout(2000);
+        const optResult = await clickOption('Last year');
+        console.log('Nashville: Last year after open:', JSON.stringify(optResult));
+        await page.waitForTimeout(3000);
+      } else {
+        console.log('Nashville: no date filter elements found, proceeding without filter change');
+      }
     }
-    await page.waitForTimeout(4000);
 
     csvPrior = await downloadCSV('prior year');
   } catch(e) {
