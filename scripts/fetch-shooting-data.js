@@ -134,7 +134,7 @@ async function fetchDetroit() {
 // ─── Durham ───────────────────────────────────────────────────────────────────
 
 async function fetchDurham() {
-  // Durham PDF contains an image-based bar chart - render via pdfjs + canvas, send to Claude vision
+  // Durham PDF contains an image-based bar chart - send PDF directly to Claude vision API
   const archiveUrl = 'https://www.durhamnc.gov/Archive.aspx?AMID=211';
   console.log('Durham archive URL:', archiveUrl);
   const archResp = await fetchUrl(archiveUrl);
@@ -166,16 +166,9 @@ async function fetchDurham() {
   }
   console.log('Durham asof:', asof);
 
-  // Render PDF page to PNG using pdfjs + node-canvas
-  const { createCanvas } = require('canvas');
-  const viewport = pg1.getViewport({ scale: 2.0 });
-  const canvas  = createCanvas(viewport.width, viewport.height);
-  const ctx     = canvas.getContext('2d');
-  await pg1.render({ canvasContext: ctx, viewport }).promise.catch(e => { throw new Error('Durham PDF render failed: ' + (e && e.message || String(e))); });
-  const pngBuf = canvas.toBuffer('image/png');
-  console.log('Durham: rendered PDF to PNG, size:', pngBuf.length, 'bytes');
-
-  const base64Image = pngBuf.toString('base64');
+  // Send PDF directly to Claude vision API (no canvas needed)
+  const base64Pdf = pdfResp.body.toString('base64');
+  console.log('Durham: sending PDF to vision API, size:', pdfResp.body.length, 'bytes');
 
   // Send to Claude vision API
   const claudeData = await new Promise((resolve, reject) => {
@@ -185,7 +178,7 @@ async function fetchDurham() {
       messages: [{
         role: 'user',
         content: [
-          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64Image } },
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf } },
           { type: 'text', text: 'This is a Durham Police Department shooting data chart. Look at the "Non-Fatal" bar group on the right side. What are the exact numbers shown above the three bars for 2024, 2025, and 2026? Reply with ONLY: 2024=N 2025=N 2026=N' }
         ]
       }]
