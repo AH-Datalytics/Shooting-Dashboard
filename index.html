@@ -669,16 +669,17 @@ var CITIES = [
   {
     id: 'seattle',
     name: 'Seattle, WA',
-    note: 'Shooting Victims (Manual)',
+    note: 'Shooting Victims — Fatal + Non-Fatal (Socrata)',
     type: 'Victims',
-    manual: true,
-    dataUrl: 'https://www.seattle.gov/police/information-and-data/data/crime-dashboard',
+    dataUrl: 'https://data.seattle.gov/Public-Safety/SPD-Crime-Data-2008-Present/tazs-3rd5',
+    _url: 'https://data.seattle.gov/resource/tazs-3rd5.json',
+    _shootingWhere: "(shooting_type_group = 'Shooting (Fatal Injury)' OR shooting_type_group = 'Shooting (Non-Fatal Injury)')",
     count: async function(s, e) {
-      var key = 'manual_' + this.id + '_' + s.slice(0,4);
-      try { var r = await window.storage.get(key); return r ? parseInt(r.value) : null; } catch(e) { return null; }
+      return socrataCount(this._url,
+        this._shootingWhere + " AND offense_date >= '" + s + "T00:00:00' AND offense_date <= '" + e + "T23:59:59'");
     },
     latest: async function() {
-      try { var r = await window.storage.get('manual_' + this.id + '_asof'); return r ? r.value : null; } catch(e) { return null; }
+      return socrataLatest(this._url, 'offense_date', this._shootingWhere);
     }
   },
 
