@@ -1343,43 +1343,52 @@ async function fetchHartford() {
     return dates;
   }
 
-  // The CMS version in the URL path (/v/1/, /v/2/, /v/3/, etc.) changes over time
-  function buildUrl(d, version) {
+  // Use /v/1/ - the site redirects to the current version automatically
+  // (Playwright handles the redirect; raw HTTP gets blocked by WAF with 403)
+  function buildUrl(d) {
     const yyyy = d.getFullYear();
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
     const yy = String(yyyy).slice(-2);
-    return 'https://www.hartfordct.gov/files/assets/public/v/' + version + '/police/police-documents/compstat/' + yyyy + '/' + mm + '/we-' + mm + '-' + dd + '-' + yy + '.pdf';
+    return 'https://www.hartfordct.gov/files/assets/public/v/1/police/police-documents/compstat/' + yyyy + '/' + mm + '/we-' + mm + '-' + dd + '-' + yy + '.pdf';
   }
 
   function fmtDate(d) {
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
   }
 
-  // Try downloading recent PDFs with multiple CMS version paths
+  // Use Playwright to download PDF (site blocks raw HTTP with 403)
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+
   const saturdays = getWeekEndingSaturdays();
-  const versions = [3, 2, 1, 4, 5]; // /v/N/ in URL - try most likely versions first
   let pdfBuffer = null;
   let asof = null;
 
-  for (const d of saturdays) {
-    for (const v of versions) {
-      const url = buildUrl(d, v);
+  try {
+    for (const d of saturdays) {
+      const url = buildUrl(d);
       console.log('Hartford: trying', url);
       try {
-        const resp = await fetchUrl(url, 15000);
-        console.log('Hartford:   status=' + resp.status + ' size=' + resp.body.length + ' byte0=0x' + (resp.body.length > 0 ? resp.body[0].toString(16) : '??'));
-        if (resp.status === 200 && resp.body.length > 10000 && resp.body[0] === 0x25) {
-          pdfBuffer = resp.body;
-          asof = fmtDate(d);
-          console.log('Hartford: downloaded PDF for', asof, '(' + (resp.body.length / 1024).toFixed(0) + ' KB) via /v/' + v + '/');
-          break;
+        const resp = await page.goto(url, { waitUntil: 'load', timeout: 20000 });
+        const status = resp ? resp.status() : 0;
+        const ct = resp ? (resp.headers()['content-type'] || '') : '';
+        console.log('Hartford:   status=' + status + ' content-type=' + ct);
+        if (status === 200 && ct.includes('pdf')) {
+          const body = await resp.body();
+          if (body.length > 10000 && body[0] === 0x25) {
+            pdfBuffer = body;
+            asof = fmtDate(d);
+            console.log('Hartford: downloaded PDF for', asof, '(' + (body.length / 1024).toFixed(0) + ' KB)');
+            break;
+          }
         }
       } catch(e) {
         console.log('Hartford:   error:', e.message);
       }
     }
-    if (pdfBuffer) break;
+  } finally {
+    await browser.close();
   }
 
   if (!pdfBuffer) throw new Error('Hartford: could not download any recent CompStat PDF');
