@@ -1332,32 +1332,63 @@ async function fetchNashville() {
   async function downloadMapCSV(label) {
     // Find Download toolbar button — small element with exact aria-label "Download"
     const dlBtn = await fEval(function() {
-      // Tableau toolbar: button with aria-label="Download" or title="Download"
-      var el = Array.from(document.querySelectorAll('[aria-label="Download"],[title="Download"]')).find(function(e) {
-        var r = e.getBoundingClientRect();
-        return r.width > 0 && r.width < 150;
-      });
+      // Try every reasonable way to find the Tableau Download toolbar button
+      var el = null;
+      // 1. aria-label or title exactly "Download"
+      el = Array.from(document.querySelectorAll('[aria-label="Download"],[title="Download"]'))
+            .find(function(e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.width < 200; });
+      // 2. data-tb-test-id containing "download"
+      if (!el) el = Array.from(document.querySelectorAll('[data-tb-test-id]'))
+            .find(function(e) {
+              var r = e.getBoundingClientRect();
+              return (e.getAttribute('data-tb-test-id')||'').toLowerCase().includes('download') && r.width > 0;
+            });
+      // 3. Small element whose sole innerText is "Download"
+      if (!el) el = Array.from(document.querySelectorAll('*'))
+            .find(function(e) {
+              var r = e.getBoundingClientRect();
+              return (e.innerText||'').trim() === 'Download' && r.width > 0 && r.width < 200 && r.height < 60;
+            });
+      // 4. SVG title element containing "Download" — get parent
       if (!el) {
-        // Fallback: any small clickable with "Download" in label
-        el = Array.from(document.querySelectorAll('*')).find(function(e) {
-          var lbl = (e.getAttribute('aria-label')||e.getAttribute('title')||'');
-          var r = e.getBoundingClientRect();
-          return lbl === 'Download' && r.width > 0 && r.width < 150;
-        });
+        var titleEl = Array.from(document.querySelectorAll('title'))
+              .find(function(t) { return t.textContent.trim() === 'Download'; });
+        if (titleEl) el = titleEl.closest('button,a,[role="button"]') || titleEl.parentElement;
       }
+      // 5. Any element with "Download" anywhere in aria-label and small size
+      if (!el) el = Array.from(document.querySelectorAll('[aria-label]'))
+            .find(function(e) {
+              var r = e.getBoundingClientRect();
+              var lbl = e.getAttribute('aria-label')||'';
+              return lbl.includes('Download') && !lbl.includes('\n') && r.width > 0 && r.width < 200;
+            });
       if (!el) return null;
       var r = el.getBoundingClientRect();
-      return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2), w: Math.round(r.width), h: Math.round(r.height) };
+      return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2), w: Math.round(r.width), h: Math.round(r.height),
+               aria: (el.getAttribute('aria-label')||'').substring(0,40),
+               title: (el.getAttribute('title')||'').substring(0,40),
+               testId: (el.getAttribute('data-tb-test-id')||'').substring(0,40) };
     });
     if (!dlBtn) {
-      // Log all aria-label elements for diagnosis
-      const allAria = await fEval(function() {
-        return Array.from(document.querySelectorAll('[aria-label]')).map(function(e) {
+      // Log ALL visible small elements for diagnosis
+      const allSmall = await fEval(function() {
+        return Array.from(document.querySelectorAll('*')).filter(function(e) {
           var r = e.getBoundingClientRect();
-          return { lbl: (e.getAttribute('aria-label')||'').substring(0,50), w: Math.round(r.width), h: Math.round(r.height) };
-        }).filter(function(e) { return e.w > 0 && e.w < 200; });
+          return r.width > 0 && r.width < 150 && r.height > 0 && r.height < 60;
+        }).map(function(e) {
+          var r = e.getBoundingClientRect();
+          return {
+            tag: e.tagName,
+            aria: (e.getAttribute('aria-label')||'').substring(0,50),
+            title: (e.getAttribute('title')||'').substring(0,30),
+            testId: (e.getAttribute('data-tb-test-id')||'').substring(0,30),
+            text: (e.innerText||'').trim().substring(0,30),
+            w: Math.round(r.width), h: Math.round(r.height),
+            x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2)
+          };
+        }).filter(function(e) { return e.aria || e.title || e.testId || e.text; });
       });
-      console.log('Nashville: aria-label elements in iframe:', JSON.stringify(allAria));
+      console.log('Nashville: all small iframe elements:', JSON.stringify(allSmall));
       throw new Error('Nashville: Download toolbar button not found');
     }
     console.log('Nashville: Download toolbar btn:', JSON.stringify(dlBtn));
