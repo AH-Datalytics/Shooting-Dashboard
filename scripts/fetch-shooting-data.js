@@ -1186,6 +1186,9 @@ async function fetchPortland() {
   }
   console.log('Portland: asof:', asof);
 
+  // Extra wait to ensure SVG numbers have painted before screenshotting
+  await page.waitForTimeout(5000);
+
   // Screenshot the full page for vision API
   const screenshotBuf = await page.screenshot({ fullPage: false });
   await browser.close();
@@ -1229,12 +1232,12 @@ async function fetchPortland() {
 
   let visionText = await callVision(base64Image);
   console.log('Portland vision response:', visionText);
-  // Retry once if response is empty or unparseable
-  if (!visionText.includes('HOM=')) {
-    console.log('Portland: retrying vision call...');
-    await new Promise(r => setTimeout(r, 2000));
+  // Retry up to 3 times if response is empty or unparseable
+  for (let retry = 1; retry <= 3 && !visionText.includes('HOM='); retry++) {
+    console.log('Portland: retrying vision call attempt ' + retry + '...');
+    await new Promise(r => setTimeout(r, 3000));
     visionText = await callVision(base64Image);
-    console.log('Portland vision retry response:', visionText);
+    console.log('Portland vision retry ' + retry + ' response:', visionText);
   }
 
   function extractVal(text, key) {
@@ -1307,68 +1310,53 @@ async function fetchNashville() {
   await page.goto(vizUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(6000);
 
-  // Open the date filter dropdown
-  // The filter label "Last 2 months" or "Offense Report Date" should be clickable
+  // Open the date filter dropdown by clicking the filter label
   async function openFilter() {
-    // Try clicking the dropdown arrow next to the date filter label
-    // Tableau embeds render filter controls in the main frame (not an iframe)
     const clicked = await page.evaluate(() => {
       const all = Array.from(document.querySelectorAll('*'));
-      // Look for element with text matching the filter label
       const el = all.find(e => {
         const t = (e.innerText || e.textContent || '').trim();
-        return (t === 'Last 2 months' || t === 'Offense Report Date' || t === 'Last 1 month') &&
-               e.children.length <= 3;
+        return (t === 'Last 2 months' || t === 'Offense Report Date' || t === 'Last 1 month' ||
+                /^Last \d+ months?$/.test(t)) && e.children.length <= 3;
       });
       if (el) { el.click(); return el.textContent.trim(); }
       return null;
     });
-    console.log('Nashville: clicked filter element:', clicked);
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(1000);
     return !!clicked;
   }
 
-  // Set the "Last N months" spinner value and wait for the viz to re-render
+  // Set the "Last N months" value using the Dojo input's keyup handler directly
+  // The input has dojoattachpoint="inputLastn" and listens to onkeyup:onTypingLast
+  // We bypass Playwright visibility by using page.evaluate to set value + fire keyup
   async function setLastNMonths(n) {
-    // Tableau uses controlled React inputs — must use real Playwright keyboard events
-    // First log current spinner state for debugging
-    const spinnerInfo = await page.evaluate(() => {
-      const inputs = Array.from(document.querySelectorAll('input[type="number"], input[type="text"]'));
-      const spinner = inputs.find(i => /^\d+$/.test((i.value || '').trim()) && parseInt(i.value) >= 1 && parseInt(i.value) <= 36);
-      if (!spinner) return { found: false, allInputs: inputs.map(i => ({ type: i.type, value: i.value, id: i.id })) };
-      return { found: true, value: spinner.value };
-    });
-    if (n === 1 || !spinnerInfo.found) {
-      console.log('Nashville: spinner info for N=' + n + ':', JSON.stringify(spinnerInfo));
-    }
-    if (!spinnerInfo.found) return false;
+    // Re-open filter panel (it closes after the viz re-renders)
+    await openFilter();
+    await page.waitForTimeout(500);
 
-    // Find the spinner via Playwright and use real keyboard interaction
-    const allInputs = await page.locator('input').all();
-    let targetInput = null;
-    for (const inp of allInputs) {
-      try {
-        const val = await inp.inputValue();
-        if (/^\d+$/.test(val.trim()) && parseInt(val) >= 1 && parseInt(val) <= 36) {
-          targetInput = inp;
-          break;
-        }
-      } catch(e) {}
-    }
+    const result = await page.evaluate((n) => {
+      // Find the Dojo input by its attach point attribute
+      const input = document.querySelector('[dojoattachpoint="inputLastn"]');
+      if (!input) {
+        // Fallback: any numeric text input with small value
+        const fallback = Array.from(document.querySelectorAll('input[type="text"]'))
+          .find(i => /^\d+$/.test((i.value || '').trim()) && parseInt(i.value) <= 36);
+        if (!fallback) return { ok: false, reason: 'no input found' };
+        fallback.value = String(n);
+        fallback.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true }));
+        return { ok: true, via: 'fallback', val: fallback.value };
+      }
+      input.value = String(n);
+      // Fire keyup which triggers onTypingLast in Dojo
+      input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true }));
+      return { ok: true, via: 'dojo', val: input.value };
+    }, n);
 
-    if (!targetInput) {
-      console.log('Nashville: could not locate spinner input via Playwright for N=' + n);
-      return false;
-    }
+    if (n <= 3 || n % 5 === 0) console.log('Nashville: setN=' + n + ' result:', JSON.stringify(result));
+    if (!result.ok) return false;
 
-    // Triple-click to select all, then type new value, then Enter to apply
-    await targetInput.click({ clickCount: 3 });
-    await targetInput.type(String(n));
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(4000);
-
-    const newVal = await targetInput.inputValue().catch(() => '?');
-    if (n <= 3 || n % 5 === 0) console.log('Nashville: after N=' + n + ', spinner=' + newVal);
+    // Wait for viz to re-render (Tableau typically takes 2-3s after filter change)
+    await page.waitForTimeout(3500);
     return true;
   }
 
@@ -1410,29 +1398,9 @@ async function fetchNashville() {
     return null;
   }
 
-  // Open the filter once
+  // Open the filter initially to make sure the panel renders at least once
   const filterOpened = await openFilter();
-  if (!filterOpened) {
-    console.log('Nashville: WARNING — could not open filter, will try clicking "Last N months" radio');
-    // Try clicking the "Last" radio button area directly
-    await page.evaluate(() => {
-      const all = Array.from(document.querySelectorAll('*'));
-      const el = all.find(e => (e.innerText || '').trim() === 'Last');
-      if (el) el.click();
-    });
-    await page.waitForTimeout(1500);
-  }
-
-  // Also make sure "Last N months" radio is selected (not "Previous month" etc.)
-  await page.evaluate(() => {
-    const inputs = Array.from(document.querySelectorAll('input[type="radio"]'));
-    // Find radio near "Last" label
-    const lastRadio = inputs.find(i => {
-      const label = i.labels?.[0]?.textContent || i.nextSibling?.textContent || '';
-      return label.includes('Last');
-    });
-    if (lastRadio && !lastRadio.checked) lastRadio.click();
-  }).catch(() => {});
+  console.log('Nashville: initial filter open:', filterOpened);
   await page.waitForTimeout(1000);
 
   // Fetch cumulative counts for N=1 through totalMonthsNeeded
