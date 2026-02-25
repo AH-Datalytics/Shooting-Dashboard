@@ -386,9 +386,13 @@ async function fetchMemphis() {
   // Strategy priority: title text → vision API fallback.
   let ytd = null, prior = null;
 
-  // Strategy 1: Chart title "2026: 70" and "2025: 97 (-27.84%)" as separate matches
-  var ytdMatch = chartText.match(new RegExp(yr + ':\\s*(\\d+)'));
-  var priorMatch = chartText.match(new RegExp((yr-1) + ':\\s*(\\d+)'));
+  // Strategy 1: Chart title shows "2026: 70" and "2025: 97 (-27.84%)"
+  // CRITICAL: Power BI concatenates these on ONE line with NO separator:
+  //   "2026: 702025: 97 (-27.84%)"
+  // Greedy \d+ would capture "702025" instead of "70".
+  // Use lazy \d+? with lookahead: stop before next YYYY:, whitespace, or paren.
+  var ytdMatch = chartText.match(new RegExp(yr + ':\\s*(\\d+?)(?=\\d{4}:|\\s|\\(|$)'));
+  var priorMatch = chartText.match(new RegExp((yr-1) + ':\\s*(\\d+?)(?=\\d{4}:|\\s|\\(|$)'));
   if (ytdMatch) {
     ytd = parseInt(ytdMatch[1]);
     console.log('Memphis: found YTD from title: ' + yr + ': ' + ytd);
@@ -396,6 +400,12 @@ async function fetchMemphis() {
   if (priorMatch) {
     prior = parseInt(priorMatch[1]);
     console.log('Memphis: found prior from title: ' + (yr-1) + ': ' + prior);
+  }
+
+  // Sanity check: shooting counts should be 0-999 for YTD
+  if (ytd !== null && ytd > 999) {
+    console.log('Memphis: implausible ytd=' + ytd + ', resetting to null for vision fallback');
+    ytd = null;
   }
 
   // Strategy 2 (fallback): Screenshot + Vision API
@@ -1325,7 +1335,8 @@ async function fetchPortland() {
 // Page: ~146 "Gunshot Victims (Homicides, Injuries, and Property Damage)"
 
 async function fetchNashville() {
-  const pdfParse = require('pdf-parse');
+  const pdfParseModule = require('pdf-parse');
+  const pdfParse = pdfParseModule.PDFParse || pdfParseModule.default || pdfParseModule;
 
   // ── Date utilities ──
   // Reports use Saturday dates in the filename: YYYYMMDD
