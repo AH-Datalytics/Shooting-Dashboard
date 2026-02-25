@@ -1195,175 +1195,211 @@ async function fetchNashville() {
   await page.setViewportSize({ width: 1536, height: 900 });
   page.setDefaultTimeout(30000);
 
-  // Load the nashville.gov page — Tableau embed is in an iframe
   console.log('Nashville: loading nashville.gov page...');
   await page.goto('https://www.nashville.gov/departments/police/data-dashboard/gunshot-injuries-map',
     { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(12000);
 
-  // Find the Tableau iframe and get a frame handle
+  // Get the Tableau iframe frame object
   const frames = page.frames();
-  console.log('Nashville: frames:', frames.length, frames.map(f => f.url().substring(0,80)));
   const vizFrame = frames.find(f => f.url().includes('policepublicdata.nashville.gov') && f.url().includes('GunshotInjury'));
-  if (!vizFrame) { await browser.close(); throw new Error('Nashville: Tableau iframe not found. Frames: ' + frames.map(f=>f.url().substring(0,80)).join(', ')); }
-  console.log('Nashville: found Tableau iframe:', vizFrame.url().substring(0,100));
+  if (!vizFrame) { await browser.close(); throw new Error('Nashville: Tableau iframe not found. URLs: ' + frames.map(f=>f.url().substring(0,80)).join(' | ')); }
+  console.log('Nashville: found iframe:', vizFrame.url().substring(0,100));
 
-  // Helper: evaluate in the iframe context
   const fEval = (fn, ...args) => vizFrame.evaluate(fn, ...args);
 
-  // Log toolbar buttons in the iframe
-  const toolbarBtns = await fEval(function() {
-    return Array.from(document.querySelectorAll('*')).filter(function(el) {
-      var r = el.getBoundingClientRect();
-      var label = (el.getAttribute('aria-label')||el.getAttribute('data-tb-test-id')||el.innerText||'').trim();
-      return r.width > 0 && r.height > 0 && label;
-    }).slice(0, 40).map(function(el) {
-      var r = el.getBoundingClientRect();
-      return { tag: el.tagName, label: (el.getAttribute('aria-label')||'').substring(0,40),
-               testId: (el.getAttribute('data-tb-test-id')||''), text: (el.innerText||'').trim().substring(0,30),
-               x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
-    });
-  });
-  console.log('Nashville: iframe elements:', JSON.stringify(toolbarBtns.slice(0,20)));
-
-  // Find download button inside iframe
-  const dlInfo = await fEval(function() {
-    var el = Array.from(document.querySelectorAll('*')).find(function(e) {
-      var label = (e.getAttribute('aria-label')||e.getAttribute('title')||e.innerText||'').toLowerCase();
-      var r = e.getBoundingClientRect();
-      return label.includes('download') && r.width > 0 && r.height > 0;
-    });
-    if (!el) return null;
-    var r = el.getBoundingClientRect();
-    return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2), label: el.getAttribute('aria-label')||el.innerText||'' };
-  });
-  console.log('Nashville: iframe download button:', JSON.stringify(dlInfo));
-  if (!dlInfo) { await browser.close(); throw new Error('Nashville: download button not found in iframe'); }
-
-  // Set filter to "Last 3 years" inside iframe
-  const filterBtn = await fEval(function() {
-    var el = Array.from(document.querySelectorAll('*')).find(function(e) {
-      var t = (e.innerText||'').trim();
-      var r = e.getBoundingClientRect();
-      return (t === 'This year' || t === 'This Year') && r.width > 0 && r.height > 0;
-    });
-    if (!el) return null;
-    var r = el.getBoundingClientRect();
-    return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
-  });
-  if (filterBtn) {
-    console.log('Nashville: clicking date filter in iframe');
-    await vizFrame.click('body'); // focus iframe
-    await page.mouse.click(filterBtn.x, filterBtn.y);
-    await page.waitForTimeout(2000);
-    const lastThreeOpt = await fEval(function() {
-      var el = Array.from(document.querySelectorAll('*')).find(function(e) {
-        var t = (e.innerText||'').trim();
+  // Helper: download Map CSV via the toolbar
+  // Opens Download menu → Crosstab → selects Map sheet → CSV → Download button
+  async function downloadMapCSV(label) {
+    // Find Download toolbar button — small element with exact aria-label "Download"
+    const dlBtn = await fEval(function() {
+      // Tableau toolbar: button with aria-label="Download" or title="Download"
+      var el = Array.from(document.querySelectorAll('[aria-label="Download"],[title="Download"]')).find(function(e) {
         var r = e.getBoundingClientRect();
-        return (t === 'Last 3 years' || t === 'Last 3 Years') && r.width > 0 && r.height > 0;
+        return r.width > 0 && r.width < 150;
+      });
+      if (!el) {
+        // Fallback: any small clickable with "Download" in label
+        el = Array.from(document.querySelectorAll('*')).find(function(e) {
+          var lbl = (e.getAttribute('aria-label')||e.getAttribute('title')||'');
+          var r = e.getBoundingClientRect();
+          return lbl === 'Download' && r.width > 0 && r.width < 150;
+        });
+      }
+      if (!el) return null;
+      var r = el.getBoundingClientRect();
+      return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2), w: Math.round(r.width), h: Math.round(r.height) };
+    });
+    if (!dlBtn) {
+      // Log all aria-label elements for diagnosis
+      const allAria = await fEval(function() {
+        return Array.from(document.querySelectorAll('[aria-label]')).map(function(e) {
+          var r = e.getBoundingClientRect();
+          return { lbl: (e.getAttribute('aria-label')||'').substring(0,50), w: Math.round(r.width), h: Math.round(r.height) };
+        }).filter(function(e) { return e.w > 0 && e.w < 200; });
+      });
+      console.log('Nashville: aria-label elements in iframe:', JSON.stringify(allAria));
+      throw new Error('Nashville: Download toolbar button not found');
+    }
+    console.log('Nashville: Download toolbar btn:', JSON.stringify(dlBtn));
+
+    const dlPromise = page.waitForEvent('download', { timeout: 20000 }).catch(() => null);
+    await page.mouse.click(dlBtn.x, dlBtn.y);
+    await page.waitForTimeout(1500);
+
+    // Find Crosstab in the dropdown menu
+    const ctBtn = await fEval(function() {
+      var el = Array.from(document.querySelectorAll('*')).find(function(e) {
+        var t = (e.innerText||'').trim().toLowerCase();
+        var r = e.getBoundingClientRect();
+        return t === 'crosstab' && r.width > 0;
       });
       if (!el) return null;
       var r = el.getBoundingClientRect();
       return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
     });
-    if (lastThreeOpt) {
-      console.log('Nashville: selecting "Last 3 years"');
-      await page.mouse.click(lastThreeOpt.x, lastThreeOpt.y);
-      await page.waitForTimeout(5000);
-    } else {
-      console.log('Nashville: "Last 3 years" not found');
-    }
-  } else {
-    console.log('Nashville: date filter not found in iframe');
-  }
-
-  // Click Download button in iframe
-  const downloadPromise = page.waitForEvent('download', { timeout: 25000 }).catch(() => null);
-  await vizFrame.click('body');
-  await page.mouse.click(dlInfo.x, dlInfo.y);
-  await page.waitForTimeout(1500);
-
-  // Click Crosstab in download menu (may appear in main page or iframe)
-  async function findAndClick(label) {
-    for (const ctx of [fEval, fn => page.evaluate(fn)]) {
-      const pos = await ctx(function(lbl) {
-        var el = Array.from(document.querySelectorAll('*')).find(function(e) {
-          var t = (e.innerText||'').trim().toLowerCase();
+    if (!ctBtn) {
+      const menuItems = await fEval(function() {
+        return Array.from(document.querySelectorAll('*')).filter(function(e) {
           var r = e.getBoundingClientRect();
-          return t === lbl && r.width > 0 && r.height > 0;
-        });
-        if (!el) return null;
-        var r = el.getBoundingClientRect();
-        return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
-      }, label);
-      if (pos) { await page.mouse.click(pos.x, pos.y); return true; }
+          return r.width > 0 && (e.innerText||'').trim().length > 0 && (e.innerText||'').trim().length < 40;
+        }).slice(0,25).map(function(e) { return { text: (e.innerText||'').trim(), tag: e.tagName }; });
+      });
+      console.log('Nashville: menu items after DL click:', JSON.stringify(menuItems));
+      throw new Error('Nashville: Crosstab not found in download menu');
     }
-    return false;
-  }
+    await page.mouse.click(ctBtn.x, ctBtn.y);
+    await page.waitForTimeout(1000);
 
-  const foundCrosstab = await findAndClick('crosstab');
-  console.log('Nashville: crosstab clicked:', foundCrosstab);
-  if (!foundCrosstab) { await browser.close(); throw new Error('Nashville: Crosstab option not found'); }
-  await page.waitForTimeout(1000);
-
-  // Log dialog contents then select Map sheet
-  const dialogItems = await fEval(function() {
-    return Array.from(document.querySelectorAll('*')).filter(function(e) {
-      var r = e.getBoundingClientRect();
-      return r.width > 0 && r.height > 0 && (e.innerText||'').trim().length > 0 && (e.innerText||'').trim().length < 60;
-    }).slice(0, 40).map(function(e) {
-      var r = e.getBoundingClientRect();
-      return { tag: e.tagName, text: (e.innerText||'').trim(), cls: (e.className||'').substring(0,40),
-               x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
+    // In the crosstab dialog: select Map sheet
+    const dialogItems = await fEval(function() {
+      return Array.from(document.querySelectorAll('*')).filter(function(e) {
+        var r = e.getBoundingClientRect();
+        return r.width > 0 && (e.innerText||'').trim().length > 0 && (e.innerText||'').trim().length < 50;
+      }).slice(0,40).map(function(e) {
+        var r = e.getBoundingClientRect();
+        return { text: (e.innerText||'').trim(), tag: e.tagName, cls: (e.className||'').substring(0,40),
+                 x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
+      });
     });
-  });
-  console.log('Nashville: dialog items:', JSON.stringify(dialogItems));
+    console.log('Nashville: crosstab dialog items (' + label + '):', JSON.stringify(dialogItems));
 
-  // Click Map sheet
-  const mapItem = dialogItems.find(function(i) { return i.text === 'Map'; });
-  if (mapItem) {
-    console.log('Nashville: clicking Map sheet');
-    await page.mouse.click(mapItem.x, mapItem.y);
-    await page.waitForTimeout(500);
-  } else {
-    console.log('Nashville: Map sheet not found in dialog');
+    const mapItem = dialogItems.find(i => i.text === 'Map');
+    if (mapItem) { await page.mouse.click(mapItem.x, mapItem.y); await page.waitForTimeout(500); }
+    else { console.log('Nashville: Map sheet not found in dialog'); }
+
+    // Select CSV
+    const csvItem = dialogItems.find(i => i.text.toUpperCase() === 'CSV');
+    if (csvItem) { await page.mouse.click(csvItem.x, csvItem.y); await page.waitForTimeout(500); }
+
+    // Click Download button in dialog
+    const dlDialogBtn = await fEval(function() {
+      var el = Array.from(document.querySelectorAll('button,a')).find(function(e) {
+        var t = (e.innerText||'').trim();
+        var r = e.getBoundingClientRect();
+        return t === 'Download' && r.width > 0;
+      });
+      if (!el) return null;
+      var r = el.getBoundingClientRect();
+      return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
+    });
+    console.log('Nashville: dialog Download btn:', JSON.stringify(dlDialogBtn));
+    if (dlDialogBtn) { await page.mouse.click(dlDialogBtn.x, dlDialogBtn.y); }
+
+    const dl = await dlPromise;
+    if (!dl) throw new Error('Nashville: download event not received for ' + label);
+    const buf = await new Promise((res, rej) => {
+      dl.createReadStream().then(s => {
+        const ch = []; s.on('data', c => ch.push(c)); s.on('end', () => res(Buffer.concat(ch))); s.on('error', rej);
+      });
+    });
+    const csv = (buf[0]===0xFF && buf[1]===0xFE) ? buf.toString('utf16le') : buf.toString('utf8');
+    console.log('Nashville: downloaded', label, 'CSV bytes:', buf.length, 'preview:', csv.substring(0,150));
+    return csv;
   }
 
-  // Select CSV format
-  await findAndClick('csv');
-  await page.waitForTimeout(500);
+  // ── Step 1: Download current year CSV (filter is already "This year") ──────
+  const csvCurr = await downloadMapCSV('current');
+  if (!csvCurr.includes('I Rptdt')) throw new Error('Nashville: current CSV wrong format: ' + csvCurr.substring(0,150));
 
-  // Click Download in dialog
-  const dlDialog = await fEval(function() {
-    var el = Array.from(document.querySelectorAll('button, a')).find(function(e) {
+  // ── Step 2: Change filter to "Previous year" ─────────────────────────────
+  // The date filter widget shows a dropdown. Clicking it opens a panel with radio buttons.
+  // "Previous year" is one of the radio options (from the screenshot).
+  const filterDropdown = await fEval(function() {
+    // Find the dropdown showing "This year" — small element, narrow width
+    var el = Array.from(document.querySelectorAll('*')).find(function(e) {
       var t = (e.innerText||'').trim();
       var r = e.getBoundingClientRect();
-      return t === 'Download' && r.width > 0 && r.height > 0;
+      return t === 'This year' && r.width > 0 && r.width < 300 && r.height < 60;
+    });
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2), w: Math.round(r.width) };
+  });
+  console.log('Nashville: filter dropdown:', JSON.stringify(filterDropdown));
+
+  if (!filterDropdown) { await browser.close(); throw new Error('Nashville: date filter dropdown not found'); }
+
+  await page.mouse.click(filterDropdown.x, filterDropdown.y);
+  await page.waitForTimeout(2000);
+
+  // Find and click "Previous year" radio button
+  const prevYearBtn = await fEval(function() {
+    var el = Array.from(document.querySelectorAll('*')).find(function(e) {
+      var t = (e.innerText||'').trim();
+      var r = e.getBoundingClientRect();
+      return t === 'Previous year' && r.width > 0;
     });
     if (!el) return null;
     var r = el.getBoundingClientRect();
     return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
   });
-  console.log('Nashville: dialog Download button:', JSON.stringify(dlDialog));
-  if (dlDialog) { await page.mouse.click(dlDialog.x, dlDialog.y); }
+  console.log('Nashville: "Previous year" button:', JSON.stringify(prevYearBtn));
 
-  const dl = await downloadPromise;
-  if (!dl) { await browser.close(); throw new Error('Nashville: no download event received'); }
-
-  const buf = await new Promise((res, rej) => {
-    dl.createReadStream().then(s => {
-      const ch = []; s.on('data', c => ch.push(c)); s.on('end', () => res(Buffer.concat(ch))); s.on('error', rej);
+  if (!prevYearBtn) {
+    const panelItems = await fEval(function() {
+      return Array.from(document.querySelectorAll('*')).filter(function(e) {
+        var r = e.getBoundingClientRect();
+        return r.width > 0 && (e.innerText||'').trim().length > 0 && (e.innerText||'').trim().length < 40;
+      }).slice(0,30).map(function(e) { return { text: (e.innerText||'').trim() }; });
     });
+    console.log('Nashville: panel items after filter click:', JSON.stringify(panelItems));
+    await browser.close();
+    throw new Error('Nashville: "Previous year" option not found in filter panel');
+  }
+
+  await page.mouse.click(prevYearBtn.x, prevYearBtn.y);
+  await page.waitForTimeout(500);
+
+  // Click "Apply" button to apply the filter (Tableau date pickers have an Apply button)
+  const applyBtn = await fEval(function() {
+    var el = Array.from(document.querySelectorAll('button,input[type="button"]')).find(function(e) {
+      var t = (e.innerText||e.value||'').trim();
+      var r = e.getBoundingClientRect();
+      return t === 'Apply' && r.width > 0;
+    });
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
   });
-  const csvData = (buf[0]===0xFF && buf[1]===0xFE) ? buf.toString('utf16le') : buf.toString('utf8');
-  console.log('Nashville: CSV bytes:', buf.length, 'preview:', csvData.substring(0, 200));
+  console.log('Nashville: Apply button:', JSON.stringify(applyBtn));
+  if (applyBtn) {
+    await page.mouse.click(applyBtn.x, applyBtn.y);
+    await page.waitForTimeout(4000); // wait for viz to re-render with prior year data
+  } else {
+    // Some Tableau filter panels close on radio click without needing Apply
+    await page.waitForTimeout(4000);
+  }
+
+  // ── Step 3: Download prior year CSV ──────────────────────────────────────
+  const csvPrior = await downloadMapCSV('prior');
+  if (!csvPrior.includes('I Rptdt')) throw new Error('Nashville: prior CSV wrong format: ' + csvPrior.substring(0,150));
 
   await browser.close();
 
-  if (!csvData.includes('I Rptdt')) throw new Error('Nashville: wrong CSV format. Preview: ' + csvData.substring(0, 200));
-
-  const rCurr  = countVictims(csvData, curYr, null);
-  const rPrior = countVictims(csvData, priorYr, mmdd);
+  // ── Step 4: Count victims ─────────────────────────────────────────────────
+  const rCurr  = countVictims(csvCurr,  curYr,   null);
+  const rPrior = countVictims(csvPrior, priorYr, mmdd);
   console.log('Nashville: ytd=' + rCurr.count + ' prior=' + rPrior.count + ' asof=' + rCurr.asof);
   return { ytd: rCurr.count, prior: rPrior.count, asof: rCurr.asof };
 }
