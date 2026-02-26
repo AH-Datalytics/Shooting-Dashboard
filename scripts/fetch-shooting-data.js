@@ -1325,7 +1325,7 @@ async function fetchPortsmouth() {
 
   // Try to extract date from text
   let asof = null;
-  const dateMatch = bodyText.match(/(?:Last Updated|Updated)[:\s]*(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
+  const dateMatch = bodyText.match(/(?:Last\s+(?:Database\s+)?Update[d]?|Updated)[:\s]*(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
   if (dateMatch) {
     asof = `${dateMatch[3]}-${dateMatch[1].padStart(2,'0')}-${dateMatch[2].padStart(2,'0')}`;
   }
