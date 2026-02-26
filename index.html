@@ -669,14 +669,18 @@ var CITIES = [
   {
     id: 'seattle',
     name: 'Seattle, WA',
-    note: 'Shooting Victims — Fatal + Non-Fatal (Socrata)',
-    type: 'Victims',
+    note: 'Shooting Incidents — Fatal + Non-Fatal (Socrata)',
+    type: 'Incidents',
     dataUrl: 'https://data.seattle.gov/Public-Safety/SPD-Crime-Data-2008-Present/tazs-3rd5',
     _url: 'https://data.seattle.gov/resource/tazs-3rd5.json',
-    _shootingWhere: "(shooting_type_group = 'Shooting (Fatal Injury)' OR shooting_type_group = 'Shooting (Non-Fatal Injury)')",
+    _shootingWhere: "(shooting_type_group = 'Shooting (Fatal Injury)' OR shooting_type_group = 'Shooting (Non-Fatal Injury)') AND nibrs_crime_against_category = 'PERSON'",
     count: async function(s, e) {
-      return socrataCount(this._url,
-        this._shootingWhere + " AND offense_date >= '" + s + "T00:00:00' AND offense_date <= '" + e + "T23:59:59'");
+      var where = this._shootingWhere + " AND offense_date >= '" + s + "T00:00:00' AND offense_date <= '" + e + "T23:59:59'";
+      var q = this._url + '?$where=' + encodeURIComponent(where) + '&$select=count(DISTINCT%20report_number)%20as%20n&$limit=1';
+      var r = await fetch(q, { signal: AbortSignal.timeout(15000) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var d = await r.json();
+      return parseInt(d[0] && d[0].n ? d[0].n : 0);
     },
     latest: async function() {
       return socrataLatest(this._url, 'offense_date', this._shootingWhere);
