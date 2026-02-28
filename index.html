@@ -877,40 +877,6 @@ var CITIES = [
     }
   },
   {
-    id: 'rochester',
-    name: 'Rochester, NY',
-    note: 'Shooting Victims (ArcGIS)',
-    type: 'Victims',
-    dataUrl: 'https://data-rpdny.opendata.arcgis.com/',
-    _url: 'https://services7.arcgis.com/wMvCpnbQEKXZsPSQ/arcgis/rest/services/Rochester_NY_Shooting_Victims/FeatureServer/0/query',
-    count: async function(s, e) {
-      var where = "Occurred_Date >= '" + s + " 00:00:00' AND Occurred_Date <= '" + e + " 23:59:59'";
-      var url = this._url + '?where=' + encodeURIComponent(where) + '&returnCountOnly=true&f=json';
-      var r = await fetch(url, { signal: AbortSignal.timeout(15000) });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      var d = await r.json();
-      if (d.error) throw new Error(d.error.message || JSON.stringify(d.error).slice(0, 120));
-      return d.count;
-    },
-    latest: async function() {
-      var url = this._url + '?where=1%3D1&outFields=Occurred_Date&orderByFields=Occurred_Date+DESC&resultRecordCount=1&f=json';
-      try {
-        var r = await fetch(url, { signal: AbortSignal.timeout(10000) });
-        if (!r.ok) return null;
-        var d = await r.json();
-        if (d.error || !d.features || !d.features.length) return null;
-        var raw = d.features[0].attributes.Occurred_Date;
-        if (typeof raw === 'number') {
-          var dt = new Date(raw);
-          var mm = String(dt.getMonth() + 1).padStart(2, '0');
-          var dd = String(dt.getDate()).padStart(2, '0');
-          return dt.getFullYear() + '-' + mm + '-' + dd;
-        }
-        return raw ? raw.slice(0, 10) : null;
-      } catch(e) { return null; }
-    }
-  },
-  {
     id: 'portland',
     name: 'Portland, OR',
     note: 'Shooting Incidents (Homicide + Non-Fatal Injury)',
@@ -958,42 +924,23 @@ var CITIES = [
   {
     id: 'minneapolis',
     name: 'Minneapolis, MN',
-    note: 'Gunshot Wound Victims (sum of Crime_Count)',
+    note: 'Gunshot Wound Victims (ArcGIS, server-side)',
     type: 'Non-Fatal',
-    dataUrl: 'https://www.minneapolismn.gov/government/government-data/datasource/crime-dashboard/',
-    _url: 'https://services.arcgis.com/afSMGVsC7QlRK1kZ/arcgis/rest/services/Crime_Data/FeatureServer/0/query',
+    dataUrl: 'https://opendata.minneapolismn.gov/datasets/cityoflakes::crime-data/about',
     count: async function(s, e) {
-      var where = "Type = 'Gunshot Wound Victims'" +
-        " AND Reported_Date >= TIMESTAMP '" + s + " 00:00:00' AND Reported_Date <= TIMESTAMP '" + e + " 23:59:59'";
-      var url = this._url + '?where=' + encodeURIComponent(where) +
-        '&outStatistics=' + encodeURIComponent('[{"statisticType":"sum","onStatisticField":"Crime_Count","outStatisticFieldName":"total"}]') +
-        '&f=json';
-      var r = await fetch(url, { signal: AbortSignal.timeout(15000) });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      var d = await r.json();
-      if (d.error) throw new Error(d.error.message || JSON.stringify(d.error).slice(0, 120));
-      return d.features[0].attributes.total;
+      var auto = await loadAutoData();
+      if (auto.minneapolis && auto.minneapolis.ok) {
+        var windowYear = parseInt(s.slice(0,4));
+        var asofYear = auto.minneapolis.asof ? parseInt(auto.minneapolis.asof.slice(0,4)) : CURRENT_YEAR;
+        return windowYear === asofYear ? auto.minneapolis.ytd : auto.minneapolis.prior;
+      }
+      var key = 'manual_' + this.id + '_' + s.slice(0,4);
+      try { var r = await window.storage.get(key); return r ? parseInt(r.value) : null; } catch(e) { return null; }
     },
     latest: async function() {
-      var where = "Type = 'Gunshot Wound Victims'";
-      var url = this._url + '?where=' + encodeURIComponent(where) +
-        '&outFields=Reported_Date&orderByFields=Reported_Date+DESC&resultRecordCount=1&f=json';
-      try {
-        var r = await fetch(url, { signal: AbortSignal.timeout(10000) });
-        if (!r.ok) return null;
-        var d = await r.json();
-        if (d.error || !d.features || !d.features.length) return null;
-        var raw = d.features[0].attributes.Reported_Date;
-        if (!raw) return null;
-        if (typeof raw === 'number') {
-          var dt = new Date(raw);
-          var mm = String(dt.getMonth() + 1).padStart(2, '0');
-          var dd = String(dt.getDate()).padStart(2, '0');
-          return dt.getFullYear() + '-' + mm + '-' + dd;
-        }
-        // Format: "2026/02/17 18:28:00+00" → "2026-02-17"
-        return String(raw).slice(0, 10).replace(/\//g, '-');
-      } catch(e) { return null; }
+      var auto = await loadAutoData();
+      if (auto.minneapolis && auto.minneapolis.ok && auto.minneapolis.asof) return auto.minneapolis.asof;
+      try { var r = await window.storage.get('manual_' + this.id + '_asof'); return r ? r.value : null; } catch(e) { return null; }
     }
   },
   {
