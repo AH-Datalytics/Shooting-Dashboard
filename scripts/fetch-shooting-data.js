@@ -821,12 +821,42 @@ async function fetchMiamiDade() {
 // ─── Omaha ─────────────────────────────────────────────────────────────────────
 
 async function fetchOmaha() {
-  const pdfPath = require('path').join(__dirname, '..', 'data', 'omaha-shootings.pdf');
-  if (!require('fs').existsSync(pdfPath)) {
-    throw new Error('Omaha PDF not found at data/omaha-shootings.pdf — please commit the latest PDF from https://police.cityofomaha.org/opd-crime-statistics');
+  // URL pattern: /images/crime-statistics-reports/2024/Website_-_Non-Fatal_Shootings_and_Homicides_MMDDYYYY.pdf
+  // The "2024" folder is static regardless of data year
+  const BASE = 'https://police.cityofomaha.org/images/crime-statistics-reports/2024';
+  const FILENAME = 'Website_-_Non-Fatal_Shootings_and_Homicides';
+
+  let pdfResp = null;
+  const today = new Date();
+  for (let daysBack = 0; daysBack <= 60; daysBack++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - daysBack);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    const candidate = `${BASE}/${FILENAME}_${mm}${dd}${yyyy}.pdf`;
+    try {
+      const resp = await fetchUrl(candidate, 10000);
+      if (resp.status === 200) {
+        pdfResp = resp;
+        console.log('Omaha: found PDF at', candidate);
+        break;
+      }
+    } catch (e) { /* try next date */ }
   }
-  const pdfBuf = require('fs').readFileSync(pdfPath);
-  console.log('Omaha PDF loaded from local file, size:', pdfBuf.length);
+
+  // Fall back to locally committed PDF if URL search failed
+  if (!pdfResp) {
+    console.log('Omaha: URL search failed, trying local PDF...');
+    const localPath = require('path').join(__dirname, '..', 'data', 'omaha-shootings.pdf');
+    if (!require('fs').existsSync(localPath)) {
+      throw new Error('Omaha: no PDF found via URL (60 days) and no local fallback at data/omaha-shootings.pdf');
+    }
+    pdfResp = { body: require('fs').readFileSync(localPath) };
+    console.log('Omaha: using local PDF');
+  }
+
+  console.log('Omaha PDF size:', pdfResp.body.length);
 
   let pdfjsLib;
   try { pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js'); }
@@ -954,6 +984,132 @@ async function fetchMinneapolis() {
   return { ytd, prior, asof };
 }
 
+// ─── Wilmington (WPD CompStat PDF) ───────────────────────────────────────────
+
+async function fetchWilmington() {
+  const PAGE_URL = 'https://www.wilmingtonde.gov/government/public-safety/wilmington-police-department/compstat-reports';
+  const DOC_ID = '8310';
+  let pdfUrl = null;
+
+  // Step 1: Try direct page fetch to find current PDF link
+  console.log('Wilmington: fetching CompStat page...');
+  try {
+    const pageResp = await fetchUrl(PAGE_URL, 20000);
+    if (pageResp.status === 200) {
+      const html = pageResp.body.toString('utf8');
+      const match = html.match(new RegExp(`/home/showpublisheddocument/${DOC_ID}/(\\d+)`));
+      if (match) {
+        pdfUrl = `https://www.wilmingtonde.gov/home/showpublisheddocument/${DOC_ID}/${match[1]}`;
+        console.log('Wilmington: found PDF URL via direct fetch:', pdfUrl);
+      }
+    }
+  } catch (e) {
+    console.log('Wilmington: direct fetch failed:', e.message);
+  }
+
+  // Step 2: Fall back to Playwright if direct fetch didn't find the link
+  if (!pdfUrl) {
+    console.log('Wilmington: trying Playwright...');
+    const { chromium } = require('playwright');
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(PAGE_URL, { waitUntil: 'networkidle', timeout: 30000 });
+      const linkEl = page.locator(`a[href*="showpublisheddocument/${DOC_ID}"]`).first();
+      const href = await linkEl.getAttribute('href');
+      if (href) {
+        pdfUrl = href.startsWith('http') ? href : `https://www.wilmingtonde.gov${href}`;
+        console.log('Wilmington: found PDF URL via Playwright:', pdfUrl);
+      }
+    } finally {
+      await browser.close();
+    }
+  }
+
+  if (!pdfUrl) throw new Error('Wilmington: could not find CompStat PDF link on page');
+
+  // Step 3: Download the PDF
+  console.log('Wilmington: downloading PDF from', pdfUrl);
+  const pdfResp = await fetchUrl(pdfUrl, 30000);
+  if (pdfResp.status !== 200) throw new Error(`Wilmington PDF HTTP ${pdfResp.status}`);
+
+  // Step 4: Try pdfjs text extraction
+  let pdfjsLib;
+  try { pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js'); }
+  catch(e) { pdfjsLib = require(require('path').join(__dirname, '..', 'node_modules', 'pdfjs-dist', 'legacy', 'build', 'pdf.js')); }
+  pdfjsLib.GlobalWorkerOptions.workerSrc = false;
+
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(pdfResp.body) }).promise;
+  let allText = '';
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const pg = await pdf.getPage(p);
+    const tc = await pg.getTextContent();
+    allText += tc.items.map(i => i.str).join(' ') + '\n';
+  }
+  console.log('Wilmington PDF text (first 500):', allText.slice(0, 500));
+
+  const yr = new Date().getFullYear();
+  let ytd = null, prior = null, asof = null;
+
+  const dateMatch = allText.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (dateMatch) {
+    const [, m, d, y] = dateMatch;
+    asof = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+  }
+
+  const shootMatch = allText.match(/[Ss]hooting\s+[Vv]ictim[\s\S]{0,300}?(\d+)[\s\S]{0,100}?(\d+)/);
+  if (shootMatch) {
+    ytd = parseInt(shootMatch[1]);
+    prior = parseInt(shootMatch[2]);
+    console.log('Wilmington: text parsed ytd=' + ytd + ' prior=' + prior);
+  }
+
+  // Step 5: Fall back to Claude vision if text parsing failed or values look wrong
+  if (ytd === null || ytd > 500 || ytd < 0) {
+    console.log('Wilmington: text parsing insufficient, using vision API...');
+    const base64Pdf = pdfResp.body.toString('base64');
+    const claudeData = await new Promise((resolve, reject) => {
+      const body = JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 100,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf } },
+            { type: 'text', text: `Find the ${yr} year-to-date shooting victims (or shooting incidents) count and the prior year comparison. Reply ONLY: YTD=<number> PRIOR=<number> ASOF=<MM/DD/YYYY>` }
+          ]
+        }]
+      });
+      const req = https.request({
+        hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' }
+      }, res => {
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString())));
+        res.on('error', reject);
+      });
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+
+    const responseText = claudeData.content?.[0]?.text || '';
+    console.log('Wilmington vision response:', responseText);
+    const mYtd   = responseText.match(/YTD=(\d+)/);
+    const mPrior = responseText.match(/PRIOR=(\d+)/);
+    const mAsof  = responseText.match(/ASOF=(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (!mYtd) throw new Error('Wilmington: vision API could not parse values. Response: ' + responseText);
+    ytd   = parseInt(mYtd[1]);
+    prior = mPrior ? parseInt(mPrior[1]) : null;
+    if (mAsof) asof = `${mAsof[3]}-${mAsof[1].padStart(2,'0')}-${mAsof[2].padStart(2,'0')}`;
+  }
+
+  console.log('Wilmington: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
+  return { ytd, prior, asof };
+}
+
+
 async function main() {
   const fetchedAt = new Date().toISOString();
   const outDir = path.join(__dirname, '..', 'data');
@@ -993,8 +1149,9 @@ async function main() {
     safe('Nashville',  fetchNashville,  180000),
     safe('Hartford',   fetchHartford,   60000),
     safe('Denver',     fetchDenver,     120000),
-    safe('Portsmouth', fetchPortsmouth, 120000),
-    safe('Omaha',      fetchOmaha,      60000),
+    safe('Portsmouth',  fetchPortsmouth,  120000),
+    safe('Omaha',       fetchOmaha,       60000),
+    safe('Wilmington',  fetchWilmington,  120000),
   ]);
 
   for (const { key, value } of fetches) {
