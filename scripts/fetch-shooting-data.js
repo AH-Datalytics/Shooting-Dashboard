@@ -1857,69 +1857,97 @@ async function fetchNewHaven() {
 
   const listingUrl = BASE + '/government/departments-divisions/new-haven-police-department/compstat-reports';
 
-  console.log('New Haven: fetching listing page...');
+  const { chromium } = require('playwright');
 
-  const resp = await fetchUrl(listingUrl, 20000);
+  const browser = await chromium.launch({ headless: true });
 
-  if (resp.status !== 200) throw new Error('New Haven: listing page status ' + resp.status);
+  const context = await browser.newContext({ acceptDownloads: true });
 
-  const html = resp.body.toString('utf8');
+  const page = await context.newPage();
 
-  console.log('New Haven: listing page length:', html.length);
+  let pdfBuffer = null;
 
-  // Extract all href values from the page
+  let pdfUrl = null;
 
-  const hrefs = [];
+  try {
 
-  const hrefRe = /href="([^"]+)"/gi;
+    console.log('New Haven: loading listing page via Playwright...');
 
-  let hm;
+    await page.goto(listingUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-  while ((hm = hrefRe.exec(html)) !== null) hrefs.push(hm[1]);
+    const html = await page.content();
 
-  // Filter for CompStat PDF links (direct .pdf or CivicPlus showpublisheddocument)
+    console.log('New Haven: listing page length:', html.length);
 
-  let pdfLinks = hrefs.filter(h => /COMPSTAT/i.test(h) && /\.pdf/i.test(h));
+    // Extract hrefs
 
-  if (pdfLinks.length === 0) pdfLinks = hrefs.filter(h => /showpublisheddocument/i.test(h));
+    const hrefs = [];
 
-  console.log('New Haven: found', pdfLinks.length, 'PDF link(s)');
+    const hrefRe = /href="([^"]+)"/gi;
 
-  if (pdfLinks.length === 0) throw new Error('New Haven: no PDF links found on listing page. HTML length=' + html.length);
+    let hm;
 
-  // Pick the most recent: prefer links with YYYYMMDD_YYYYMMDD pattern in URL
+    while ((hm = hrefRe.exec(html)) !== null) hrefs.push(hm[1]);
 
-  let bestLink = pdfLinks[0];
+    // Filter for CompStat PDF links
 
-  for (const link of pdfLinks) {
+    let pdfLinks = hrefs.filter(h => /COMPSTAT/i.test(h) && /\.pdf/i.test(h));
 
-    const dm = link.match(/(\d{8})_(\d{8})_COMPSTAT/i);
+    if (pdfLinks.length === 0) pdfLinks = hrefs.filter(h => /showpublisheddocument/i.test(h));
 
-    if (dm) {
+    console.log('New Haven: found', pdfLinks.length, 'PDF link(s)');
 
-      const bd = bestLink.match(/(\d{8})_(\d{8})_COMPSTAT/i);
+    if (pdfLinks.length === 0) throw new Error('New Haven: no PDF links found. HTML length=' + html.length);
 
-      if (!bd || dm[2] > bd[2]) bestLink = link;
+    // Pick most recent by YYYYMMDD date in URL
+
+    let bestLink = pdfLinks[0];
+
+    for (const link of pdfLinks) {
+
+      const dm = link.match(/(\d{8})_(\d{8})_COMPSTAT/i);
+
+      if (dm) {
+
+        const bd = bestLink.match(/(\d{8})_(\d{8})_COMPSTAT/i);
+
+        if (!bd || dm[2] > bd[2]) bestLink = link;
+
+      }
 
     }
 
+    pdfUrl = bestLink.startsWith('http') ? bestLink : BASE + bestLink;
+
+    console.log('New Haven: downloading PDF from', pdfUrl);
+
+    const [download] = await Promise.all([
+
+      page.waitForEvent('download', { timeout: 30000 }),
+
+      page.goto(pdfUrl, { waitUntil: 'commit', timeout: 30000 }).catch(() => {})
+
+    ]);
+
+    const downloadPath = await download.path();
+
+    if (!downloadPath) throw new Error('New Haven: download path is null');
+
+    pdfBuffer = require('fs').readFileSync(downloadPath);
+
+    console.log('New Haven: PDF size', (pdfBuffer.length / 1024).toFixed(0), 'KB');
+
+    if (pdfBuffer[0] !== 0x25 || pdfBuffer[1] !== 0x50) throw new Error('New Haven: not a PDF');
+
+  } finally {
+
+    await browser.close();
+
   }
-
-  const pdfUrl = bestLink.startsWith('http') ? bestLink : BASE + bestLink;
-
-  console.log('New Haven: downloading PDF from', pdfUrl);
-
-  const pdfResp = await fetchUrl(pdfUrl, 30000);
-
-  if (pdfResp.status !== 200) throw new Error('New Haven: PDF status ' + pdfResp.status);
-
-  if (pdfResp.body[0] !== 0x25 || pdfResp.body[1] !== 0x50) throw new Error('New Haven: response is not a PDF (got ' + pdfResp.body.slice(0,4).toString() + ')');
-
-  console.log('New Haven: PDF size', (pdfResp.body.length / 1024).toFixed(0), 'KB');
 
   // Page 2 has the multi-year table
 
-  const tokens = await extractPdfTokens(pdfResp.body, 2);
+  const tokens = await extractPdfTokens(pdfBuffer, 2);
 
   const text = tokens.join(' ');
 
@@ -1929,25 +1957,21 @@ async function fetchNewHaven() {
 
   // Format: "NON-FATAL SHOOTING VICTIMS 5 9 5 9 5 12 14 10 2 0 4 -20.0%"
 
-  // Columns: 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 currentYear pctChange
-
   const nfsIdx = text.indexOf('NON-FATAL SHOOTING VICTIMS');
 
-  if (nfsIdx === -1) throw new Error('New Haven: NON-FATAL SHOOTING VICTIMS row not found in page 2 text');
+  if (nfsIdx === -1) throw new Error('New Haven: NON-FATAL SHOOTING VICTIMS row not found in page 2');
 
   const rowText = text.substring(nfsIdx + 'NON-FATAL SHOOTING VICTIMS'.length, nfsIdx + 300);
 
   console.log('New Haven: NFS row:', rowText.substring(0, 120));
 
-  // Extract non-negative integers (year counts); the trailing value is a float % so filter it out
-
   const allNums = (rowText.match(/-?\d+\.?\d*/g) || []).map(Number);
 
   const yearCounts = allNums.filter(n => Number.isInteger(n) && n >= 0);
 
-  console.log('New Haven: year counts array:', yearCounts);
+  console.log('New Haven: year counts:', yearCounts);
 
-  if (yearCounts.length < 2) throw new Error('New Haven: could not parse year counts from row: ' + rowText.substring(0, 80));
+  if (yearCounts.length < 2) throw new Error('New Haven: could not parse year counts: ' + rowText.substring(0, 80));
 
   const ytd   = yearCounts[yearCounts.length - 1];
 
@@ -1959,7 +1983,7 @@ async function fetchNewHaven() {
 
   const MONTHS = {jan:1,january:1,feb:2,february:2,mar:3,march:3,apr:4,april:4,may:5,jun:6,june:6,jul:7,july:7,aug:8,august:8,sep:9,september:9,oct:10,october:10,nov:11,november:11,dec:12,december:12};
 
-  const dm = text.match(/\w+\s+1\s*[-–]\s*(\w+)\s+(\d{1,2})\s*\(/);
+  const dm = text.match(/\w+\s+1\s*[-\u2013]\s*(\w+)\s+(\d{1,2})\s*\(/);
 
   if (dm) {
 
@@ -1980,7 +2004,6 @@ async function fetchNewHaven() {
   return { ytd, prior, asof };
 
 }
-
 
 // ─── Minneapolis (ArcGIS FeatureServer) ──────────────────────────────────────
 
