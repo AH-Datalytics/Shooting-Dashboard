@@ -1853,31 +1853,59 @@ async function fetchOmaha() {
 
 async function fetchNewHaven() {
 
-  const BASE = 'https://www.newhavenct.gov';
+  const BASE      = 'https://www.newhavenct.gov';
 
-  const listingUrl = BASE + '/government/departments-divisions/new-haven-police-department/compstat-reports';
+  const LISTING   = BASE + '/government/departments-divisions/new-haven-police-department/compstat-reports';
 
   const { chromium } = require('playwright');
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
 
-  const context = await browser.newContext({ acceptDownloads: true });
+    headless: true,
+
+    args: ['--disable-blink-features=AutomationControlled', '--no-sandbox']
+
+  });
+
+  const context = await browser.newContext({
+
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+
+    acceptDownloads: true,
+
+    locale: 'en-US',
+
+    viewport: { width: 1280, height: 800 }
+
+  });
+
+  // Remove webdriver flag so Akamai bot challenge passes
+
+  await context.addInitScript(() => {
+
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+  });
 
   const page = await context.newPage();
 
   let pdfBuffer = null;
 
-  let pdfUrl = null;
-
   try {
 
-    console.log('New Haven: loading listing page via Playwright...');
+    console.log('New Haven: loading listing page...');
 
-    await page.goto(listingUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto(LISTING, { waitUntil: 'networkidle', timeout: 45000 });
+
+    // Extra wait for Akamai bot challenge JS to complete
+
+    await page.waitForTimeout(3000);
 
     const html = await page.content();
 
-    console.log('New Haven: listing page length:', html.length);
+    console.log('New Haven: listing HTML length:', html.length);
+
+    if (html.length < 1000) throw new Error('New Haven: listing page blocked (length=' + html.length + '). Content: ' + html.substring(0, 200));
 
     // Extract hrefs
 
@@ -1889,17 +1917,13 @@ async function fetchNewHaven() {
 
     while ((hm = hrefRe.exec(html)) !== null) hrefs.push(hm[1]);
 
-    // Filter for CompStat PDF links
-
     let pdfLinks = hrefs.filter(h => /COMPSTAT/i.test(h) && /\.pdf/i.test(h));
 
     if (pdfLinks.length === 0) pdfLinks = hrefs.filter(h => /showpublisheddocument/i.test(h));
 
     console.log('New Haven: found', pdfLinks.length, 'PDF link(s)');
 
-    if (pdfLinks.length === 0) throw new Error('New Haven: no PDF links found. HTML length=' + html.length);
-
-    // Pick most recent by YYYYMMDD date in URL
+    if (pdfLinks.length === 0) throw new Error('New Haven: no PDF links found on listing page');
 
     let bestLink = pdfLinks[0];
 
@@ -1917,7 +1941,7 @@ async function fetchNewHaven() {
 
     }
 
-    pdfUrl = bestLink.startsWith('http') ? bestLink : BASE + bestLink;
+    const pdfUrl = bestLink.startsWith('http') ? bestLink : BASE + bestLink;
 
     console.log('New Haven: downloading PDF from', pdfUrl);
 
@@ -1929,11 +1953,11 @@ async function fetchNewHaven() {
 
     ]);
 
-    const downloadPath = await download.path();
+    const dlPath = await download.path();
 
-    if (!downloadPath) throw new Error('New Haven: download path is null');
+    if (!dlPath) throw new Error('New Haven: download path null');
 
-    pdfBuffer = require('fs').readFileSync(downloadPath);
+    pdfBuffer = require('fs').readFileSync(dlPath);
 
     console.log('New Haven: PDF size', (pdfBuffer.length / 1024).toFixed(0), 'KB');
 
@@ -1945,25 +1969,17 @@ async function fetchNewHaven() {
 
   }
 
-  // Page 2 has the multi-year table
-
   const tokens = await extractPdfTokens(pdfBuffer, 2);
 
   const text = tokens.join(' ');
 
   console.log('New Haven: page 2 sample:', text.substring(0, 300));
 
-  // Find NON-FATAL SHOOTING VICTIMS row
-
-  // Format: "NON-FATAL SHOOTING VICTIMS 5 9 5 9 5 12 14 10 2 0 4 -20.0%"
-
   const nfsIdx = text.indexOf('NON-FATAL SHOOTING VICTIMS');
 
-  if (nfsIdx === -1) throw new Error('New Haven: NON-FATAL SHOOTING VICTIMS row not found in page 2');
+  if (nfsIdx === -1) throw new Error('New Haven: NON-FATAL SHOOTING VICTIMS row not found');
 
   const rowText = text.substring(nfsIdx + 'NON-FATAL SHOOTING VICTIMS'.length, nfsIdx + 300);
-
-  console.log('New Haven: NFS row:', rowText.substring(0, 120));
 
   const allNums = (rowText.match(/-?\d+\.?\d*/g) || []).map(Number);
 
@@ -1971,13 +1987,11 @@ async function fetchNewHaven() {
 
   console.log('New Haven: year counts:', yearCounts);
 
-  if (yearCounts.length < 2) throw new Error('New Haven: could not parse year counts: ' + rowText.substring(0, 80));
+  if (yearCounts.length < 2) throw new Error('New Haven: could not parse year counts');
 
   const ytd   = yearCounts[yearCounts.length - 1];
 
   const prior = yearCounts[yearCounts.length - 2];
-
-  // Parse date from "Jan 1 - Feb 15 (2016 through 2026)"
 
   let asof = null;
 
@@ -1989,13 +2003,7 @@ async function fetchNewHaven() {
 
     const mo = MONTHS[dm[1].toLowerCase()];
 
-    if (mo) {
-
-      const yr = new Date().getFullYear();
-
-      asof = yr + '-' + String(mo).padStart(2,'0') + '-' + String(parseInt(dm[2])).padStart(2,'0');
-
-    }
+    if (mo) asof = new Date().getFullYear() + '-' + String(mo).padStart(2,'0') + '-' + String(parseInt(dm[2])).padStart(2,'0');
 
   }
 
