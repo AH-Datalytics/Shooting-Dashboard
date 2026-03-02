@@ -2016,6 +2016,51 @@ async function fetchWilmington() {
 
 
 
+  // Step 1.5: Try Wayback Machine CDX to find latest archived PDF URL
+  // (needed because wilmingtonde.gov blocks GitHub Actions IPs)
+
+  if (!pdfUrl) {
+
+    try {
+
+      const yr = new Date().getFullYear();
+
+      const cdxUrl = 'https://web.archive.org/cdx/search/cdx?url=www.wilmingtonde.gov/home/showpublisheddocument/' + DOC_ID + '/*&output=json&limit=5&fl=timestamp,original&matchType=prefix&from=' + yr + '0101';
+
+      console.log('Wilmington: querying Wayback CDX:', cdxUrl);
+
+      const cdxResp = await fetchUrl(cdxUrl, 20000);
+
+      if (cdxResp.status === 200) {
+
+        const rows = JSON.parse(cdxResp.body.toString('utf8'));
+
+        console.log('Wilmington: CDX rows:', rows.length - 1);
+
+        if (rows && rows.length > 1) {
+
+          const [timestamp, originalUrl] = rows[rows.length - 1];
+
+          // Download via Wayback Machine raw CDN (if_ returns raw file without injected header)
+
+          pdfUrl = 'https://web.archive.org/web/' + timestamp + 'if_/' + originalUrl;
+
+          console.log('Wilmington: CDX found URL crawled', timestamp + ':', pdfUrl);
+
+        }
+
+      }
+
+    } catch (e) {
+
+      console.log('Wilmington: Wayback CDX failed:', e.message);
+
+    }
+
+  }
+
+
+
   // Step 2: Fall back to Playwright if direct fetch didn't find the link
 
   if (!pdfUrl) {
