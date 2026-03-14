@@ -1703,131 +1703,6 @@ async function fetchMinneapolis() {
 
 
 
-// ─── Aurora, IL (PACT Statistics PDF) ─────────────────────────────────────────
-
-async function fetchAurora() {
-  // Crime data page is JS-rendered — need Playwright to expand year/month folders.
-  // Structure: year folders > month folders > GetFile.ashx?key= links with date text (M-D-YY)
-  const { chromium } = require('playwright');
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
-
-  console.log('Aurora: loading crime data page...');
-  await page.goto('https://www.auroragov.org/residents/public_safety/police/crime_data', { waitUntil: 'networkidle', timeout: 30000 });
-
-  // Click current year folder
-  const yr = new Date().getFullYear();
-  try {
-    await page.locator('a', { hasText: yr + ' - Crime Data' }).click();
-    await page.waitForTimeout(1000);
-    console.log('Aurora: expanded ' + yr + ' folder');
-  } catch (e) { console.log('Aurora: could not expand year folder:', e.message); }
-
-  // Click latest month folder to expand it
-  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  for (let i = monthNames.length - 1; i >= 0; i--) {
-    try {
-      const monthLink = page.locator('a', { hasText: new RegExp('^' + monthNames[i]) });
-      if (await monthLink.count() > 0) {
-        await monthLink.first().click();
-        await page.waitForTimeout(800);
-        console.log('Aurora: expanded ' + monthNames[i]);
-        break;
-      }
-    } catch (e) { /* month not found, try earlier */ }
-  }
-
-  // Find all GetFile links with date-like text
-  const pdfLinks = await page.evaluate(() => {
-    return Array.from(document.querySelectorAll('a[href*="GetFile"]'))
-      .map(a => ({ href: a.href, text: a.textContent.trim() }))
-      .filter(l => /^\d+-\d+-\d+$/.test(l.text));
-  });
-  console.log('Aurora: found', pdfLinks.length, 'PDF links:', JSON.stringify(pdfLinks));
-
-  await browser.close();
-
-  // Pick the one with the latest date
-  let bestUrl = null, bestDate = null, bestDateNum = 0;
-  for (const link of pdfLinks) {
-    const parts = link.text.split('-');
-    if (parts.length === 3) {
-      const mo = parseInt(parts[0]), day = parseInt(parts[1]);
-      let y = parseInt(parts[2]);
-      if (y < 100) y += 2000;
-      const dateNum = y * 10000 + mo * 100 + day;
-      if (dateNum > bestDateNum) {
-        bestDateNum = dateNum;
-        bestUrl = link.href;
-        bestDate = y + '-' + String(mo).padStart(2, '0') + '-' + String(day).padStart(2, '0');
-      }
-    }
-  }
-
-  if (!bestUrl) throw new Error('Aurora: no PACT PDF links found on crime data page');
-  console.log('Aurora: latest PDF:', bestUrl, 'date:', bestDate);
-
-  const resp = await fetchUrl(bestUrl, 30000);
-  if (resp.status !== 200) throw new Error('Aurora: PDF HTTP ' + resp.status);
-  console.log('Aurora: PDF size:', resp.body.length, 'bytes');
-
-  const tokens = await extractPdfTokens(resp.body, 1);
-  const joined = tokens.join(' ');
-
-  // Find "All Shootings (bullet hit flesh)" row and extract all numbers after it
-  const idx = joined.indexOf('All Shootings');
-  if (idx === -1) throw new Error('Aurora: "All Shootings" row not found in PDF');
-  const afterLabel = joined.substring(idx);
-  // Extract all numbers from the row (stop at next label/section)
-  const allNums = [];
-  const numPattern = /(-?\d+\.?\d*%?)/g;
-  let match;
-  // Get tokens after the label text
-  const rowTokens = afterLabel.split(/\s+/);
-  // Skip label tokens (non-numeric), then collect all numbers
-  let pastLabel = false;
-  for (const tok of rowTokens) {
-    if (!pastLabel) {
-      if (/^-?\d/.test(tok)) pastLabel = true;
-      else continue;
-    }
-    if (pastLabel) {
-      const n = parseInt(tok.replace(/,/g, ''));
-      if (!isNaN(n)) allNums.push(n);
-      // Stop if we hit a non-numeric token after collecting numbers (next row)
-      else if (allNums.length > 5) break;
-    }
-  }
-  console.log('Aurora: extracted numbers:', allNums.slice(0, 15).join(', '));
-
-  // YTDLast and YTDCurrent are typically the 11th and 12th numbers (indices 10, 11)
-  // But verify by checking: they should be the largest pair near the end before any % values
-  let ytdLast, ytdCurrent;
-  if (allNums.length >= 12) {
-    ytdLast = allNums[10];
-    ytdCurrent = allNums[11];
-  } else if (allNums.length >= 2) {
-    // Fallback: use the last two large numbers
-    ytdLast = allNums[allNums.length - 2];
-    ytdCurrent = allNums[allNums.length - 1];
-  } else {
-    throw new Error('Aurora: not enough numbers parsed. Found: ' + allNums.join(', '));
-  }
-  console.log('Aurora: YTD current=' + ytdCurrent + ' prior=' + ytdLast);
-
-  if (isNaN(ytdCurrent)) throw new Error('Aurora: could not parse YTD current. Numbers: ' + allNums.slice(0, 15).join(', '));
-
-  // Use date from page link (more reliable); fall back to PDF "Ran:" timestamp
-  let asof = bestDate;
-  if (!asof) {
-    const ranMatch = joined.match(/Ran:\s+(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    if (ranMatch) {
-      asof = ranMatch[3] + '-' + ranMatch[1].padStart(2, '0') + '-' + ranMatch[2].padStart(2, '0');
-    }
-  }
-
-  return { ytd: ytdCurrent, prior: ytdLast, asof };
-}
 
 
 async function main() {
@@ -1911,7 +1786,6 @@ async function main() {
     safe('Portsmouth',  fetchPortsmouth,  120000),
 
     // Omaha removed — Akamai blocks all automated access
-    safe('Aurora',       fetchAurora,      60000),
   ]);
 
 
