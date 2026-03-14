@@ -1576,56 +1576,12 @@ async function fetchMiamiDade() {
 
 async function fetchOmaha() {
 
-  // Akamai CDN blocks non-browser requests. Use Playwright to:
-  // 1. Load the crime stats page that links to the PDF
-  // 2. Find the "Non-Fatal Shootings and Homicides" link
-  // 3. Download the PDF via the same browser session
-
-  const { chromium } = require('playwright');
-  const browser = await chromium.launch({ headless: true, channel: 'chromium' });
-  const page = await browser.newPage();
+  // Akamai CDN blocks all automated requests (headless Playwright included).
+  // Use the locally committed PDF in data/omaha-shootings.pdf.
+  // To update: download the latest PDF from https://police.cityofomaha.org/opd-crime-statistics
+  // ("Non-Fatal Shootings and Homicides by Precinct" link) and commit it to data/omaha-shootings.pdf.
 
   let pdfResp = null;
-
-  try {
-    console.log('Omaha: loading crime statistics page...');
-    const pageResp = await page.goto('https://police.cityofomaha.org/opd-crime-statistics', { waitUntil: 'networkidle', timeout: 30000 });
-    console.log('Omaha: page status:', pageResp ? pageResp.status() : 'null');
-
-    const pageTitle = await page.title();
-    console.log('Omaha: page title:', pageTitle);
-
-    // Debug: list all links on the page
-    const allLinks = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('a[href*=".pdf"]')).map(a => a.href).slice(0, 10);
-    });
-    console.log('Omaha: PDF links on page:', JSON.stringify(allLinks));
-
-    // Find the "Non-Fatal Shootings and Homicides" PDF link (not the historical one)
-    const pdfUrl = await page.evaluate(() => {
-      const links = Array.from(document.querySelectorAll('a[href*="Shootings_and_Homicides"]'));
-      const current = links.find(a => !a.textContent.toLowerCase().includes('historical'));
-      return current ? current.href : null;
-    });
-
-    if (pdfUrl) {
-      console.log('Omaha: found PDF link:', pdfUrl);
-      const resp = await page.goto(pdfUrl, { waitUntil: 'load', timeout: 30000 });
-      if (resp && resp.status() === 200) {
-        pdfResp = { body: await resp.body() };
-        console.log('Omaha: PDF downloaded, size:', pdfResp.body.length);
-      }
-    } else {
-      console.log('Omaha: no shooting PDF link found on page');
-      // Debug: dump page content
-      const bodyText = await page.evaluate(() => document.body ? document.body.innerText.substring(0, 500) : 'no body');
-      console.log('Omaha: page body preview:', bodyText);
-    }
-  } catch (e) {
-    console.log('Omaha: page scrape failed:', e.message);
-  }
-
-  await browser.close();
 
 
 
