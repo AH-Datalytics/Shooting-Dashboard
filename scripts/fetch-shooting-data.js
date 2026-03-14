@@ -1713,6 +1713,16 @@ async function fetchAurora() {
   if (pageResp.status !== 200) throw new Error('Aurora: page HTTP ' + pageResp.status);
   const html = pageResp.body.toString('utf8');
 
+  // Debug: show GetFile snippets
+  const getFileSnippets = html.match(/GetFile[^"]{0,60}/g);
+  console.log('Aurora: GetFile snippets:', JSON.stringify(getFileSnippets ? getFileSnippets.slice(0, 5) : 'none'));
+  // Debug: show date-like text near GetFile
+  const nearbyPattern = /GetFile\.ashx\?key=([^"&]+)"[^>]*>[^<]*<[\s\S]{0,200}/g;
+  let dbg;
+  while ((dbg = nearbyPattern.exec(html)) !== null) {
+    console.log('Aurora: GetFile context:', dbg[0].substring(0, 150));
+  }
+
   // Find all GetFile links with date-like text (M-D-YY)
   const linkPattern = /GetFile\.ashx\?key=([^"&]+).*?>([\d]+-[\d]+-[\d]+)</g;
   let bestUrl = null, bestDate = null, bestDateNum = 0;
