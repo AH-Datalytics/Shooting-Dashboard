@@ -933,7 +933,7 @@ var CITIES = [
     name: 'Las Vegas, NV',
     note: 'Shooting Victims (NIBRS, ShootingVictims=Y)',
     type: 'Victims',
-    dataUrl: 'https://www.lvmpd.com/en-us/Pages/CompStat.aspx',
+    dataUrl: 'https://opendata-lvmpd.hub.arcgis.com/search?tags=person%2520crime',
     _url: 'https://services.arcgis.com/jjSk6t82vIntwDbs/arcgis/rest/services/LVMPD_Weekly_NIBRS_Crimes/FeatureServer/0/query',
     count: async function(s, e) {
       var where = "ShootingVictims = 'Y' AND ReportedOn >= '" + s + " 00:00:00' AND ReportedOn <= '" + e + " 23:59:59'";
@@ -1181,6 +1181,9 @@ async function fetchAll() {
   // Reset St. Louis PDF cache on each refresh
   var stlCity = CITIES.find(function(c) { return c.id === 'stlouis'; });
   if (stlCity) stlCity._parsed = null;
+  // Reset Charlotte ArcGIS cache on each refresh
+  var cltCity = CITIES.find(function(c) { return c.id === 'charlotte'; });
+  if (cltCity) cltCity._cache = null;
 
   state = {};
   CITIES.forEach(function(c) { state[c.id] = { status: 'loading' }; });

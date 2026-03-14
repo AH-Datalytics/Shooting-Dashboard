@@ -442,29 +442,49 @@ async function fetchDurham() {
 
 
 
-  // Send to Claude vision API
+  // Send to Claude vision API — ask for both Fatal and Non-Fatal, plus as-of date
   const responseText = await callClaudeVision(base64Pdf, 'application/pdf',
-    'This is a Durham Police Department shooting data chart. Look at the "Non-Fatal" bar group on the right side. What are the exact numbers shown above the three bars for 2024, 2025, and 2026? Reply with ONLY: 2024=N 2025=N 2026=N');
+    'This is a Durham Police Department shooting data chart. It has bar groups for Fatal and Non-Fatal victims. For BOTH the "Fatal" and "Non-Fatal" bar groups, what are the exact numbers shown above the bars for 2024, 2025, and 2026? Also find the "through" date (e.g. "through March 5, 2026"). Reply with ONLY: FATAL 2024=N 2025=N 2026=N NONFATAL 2024=N 2025=N 2026=N DATE=YYYY-MM-DD');
 
   console.log('Durham vision response:', responseText);
 
-  const m2025 = responseText.match(/2025=(\d+)/);
+  // Parse fatal + non-fatal for each year
+  const fatalSection = responseText.match(/FATAL\s+2024=(\d+)\s+2025=(\d+)\s+2026=(\d+)/);
+  const nonfatalSection = responseText.match(/NONFATAL\s+2024=(\d+)\s+2025=(\d+)\s+2026=(\d+)/);
 
-  const m2026 = responseText.match(/2026=(\d+)/);
+  // Fallback: try simple year=N pattern if structured format not found
+  const m2025 = responseText.match(/2025=(\d+)/g);
+  const m2026 = responseText.match(/2026=(\d+)/g);
 
-  if (!m2026) throw new Error('Could not parse Durham chart values. Response: ' + responseText);
+  let ytd, prior;
+  if (fatalSection && nonfatalSection) {
+    ytd = parseInt(fatalSection[3]) + parseInt(nonfatalSection[3]);
+    prior = parseInt(fatalSection[2]) + parseInt(nonfatalSection[2]);
+    console.log('Durham: fatal 2026=' + fatalSection[3] + ' nonfatal 2026=' + nonfatalSection[3] + ' total=' + ytd);
+  } else if (m2026 && m2026.length >= 2) {
+    // Two matches = fatal + nonfatal
+    const vals2026 = m2026.map(s => parseInt(s.match(/\d+$/)[0]));
+    ytd = vals2026.reduce((a, b) => a + b, 0);
+    const vals2025 = m2025 ? m2025.map(s => parseInt(s.match(/\d+$/)[0])) : [];
+    prior = vals2025.reduce((a, b) => a + b, 0) || null;
+    console.log('Durham: parsed 2026 values:', vals2026, 'total=' + ytd);
+  } else if (m2026) {
+    ytd = parseInt(m2026[0].match(/\d+$/)[0]);
+    prior = m2025 ? parseInt(m2025[0].match(/\d+$/)[0]) : null;
+  } else {
+    throw new Error('Could not parse Durham chart values. Response: ' + responseText);
+  }
 
+  // Use vision-extracted date if text layer didn't have it
+  if (!asof) {
+    const dateFromVision = responseText.match(/DATE=(\d{4}-\d{2}-\d{2})/);
+    if (dateFromVision) {
+      asof = dateFromVision[1];
+      console.log('Durham: got asof from vision:', asof);
+    }
+  }
 
-
-  return {
-
-    ytd:   parseInt(m2026[1]),
-
-    prior: m2025 ? parseInt(m2025[1]) : null,
-
-    asof
-
-  };
+  return { ytd, prior, asof };
 
 }
 
@@ -1258,9 +1278,9 @@ async function fetchBuffalo() {
 
 
 
-    var isVictims = category.indexOf('shooting victims') >= 0 || category.indexOf('persons hit') >= 0;
-
     var isKilled  = category.indexOf('individuals killed') >= 0 || category.indexOf('gun violence') >= 0;
+
+    var isVictims = !isKilled && (category.indexOf('shooting victims') >= 0 || category.indexOf('persons hit') >= 0);
 
     if (!isVictims && !isKilled) continue;
 
@@ -1554,11 +1574,13 @@ async function fetchMiamiDade() {
 
 async function fetchOmaha() {
 
-  // URL pattern: /images/crime-statistics-reports/2024/Website_-_Non-Fatal_Shootings_and_Homicides_MMDDYYYY.pdf
+  // URL pattern: /images/crime-statistics-reports/{YEAR}/Website_-_Non-Fatal_Shootings_and_Homicides_MMDDYYYY.pdf
 
-  // The "2024" folder is static regardless of data year
+  const BASE_ROOT = 'https://police.cityofomaha.org/images/crime-statistics-reports';
 
-  const BASE = 'https://police.cityofomaha.org/images/crime-statistics-reports/2024';
+  const currentYear = new Date().getFullYear();
+
+  const YEAR_FOLDERS = [String(currentYear), String(currentYear - 1), '2024'];
 
   const FILENAME = 'Website_-_Non-Fatal_Shootings_and_Homicides';
 
@@ -1568,35 +1590,43 @@ async function fetchOmaha() {
 
   const today = new Date();
 
-  for (let daysBack = 0; daysBack <= 60; daysBack++) {
+  for (const yearFolder of YEAR_FOLDERS) {
 
-    const d = new Date(today);
+    if (pdfResp) break;
 
-    d.setDate(today.getDate() - daysBack);
+    const BASE = `${BASE_ROOT}/${yearFolder}`;
 
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    for (let daysBack = 0; daysBack <= 60; daysBack++) {
 
-    const dd = String(d.getDate()).padStart(2, '0');
+      const d = new Date(today);
 
-    const yyyy = d.getFullYear();
+      d.setDate(today.getDate() - daysBack);
 
-    const candidate = `${BASE}/${FILENAME}_${mm}${dd}${yyyy}.pdf`;
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
 
-    try {
+      const dd = String(d.getDate()).padStart(2, '0');
 
-      const resp = await fetchUrl(candidate, 10000);
+      const yyyy = d.getFullYear();
 
-      if (resp.status === 200) {
+      const candidate = `${BASE}/${FILENAME}_${mm}${dd}${yyyy}.pdf`;
 
-        pdfResp = resp;
+      try {
 
-        console.log('Omaha: found PDF at', candidate);
+        const resp = await fetchUrl(candidate, 10000);
 
-        break;
+        if (resp.status === 200) {
 
-      }
+          pdfResp = resp;
 
-    } catch (e) { /* try next date */ }
+          console.log('Omaha: found PDF at', candidate);
+
+          break;
+
+        }
+
+      } catch (e) { /* try next date */ }
+
+    }
 
   }
 
@@ -1897,14 +1927,45 @@ async function fetchAurora() {
   const tokens = await extractPdfTokens(resp.body, 1);
   const joined = tokens.join(' ');
 
-  // Find "All Shootings (bullet hit flesh)" row — 5 label tokens then 15 value columns
+  // Find "All Shootings (bullet hit flesh)" row and extract all numbers after it
   const idx = joined.indexOf('All Shootings');
   if (idx === -1) throw new Error('Aurora: "All Shootings" row not found in PDF');
-  const vals = joined.substring(idx).split(/\s+/).slice(5); // skip label tokens
+  const afterLabel = joined.substring(idx);
+  // Extract all numbers from the row (stop at next label/section)
+  const allNums = [];
+  const numPattern = /(-?\d+\.?\d*%?)/g;
+  let match;
+  // Get tokens after the label text
+  const rowTokens = afterLabel.split(/\s+/);
+  // Skip label tokens (non-numeric), then collect all numbers
+  let pastLabel = false;
+  for (const tok of rowTokens) {
+    if (!pastLabel) {
+      if (/^-?\d/.test(tok)) pastLabel = true;
+      else continue;
+    }
+    if (pastLabel) {
+      const n = parseInt(tok.replace(/,/g, ''));
+      if (!isNaN(n)) allNums.push(n);
+      // Stop if we hit a non-numeric token after collecting numbers (next row)
+      else if (allNums.length > 5) break;
+    }
+  }
+  console.log('Aurora: extracted numbers:', allNums.slice(0, 15).join(', '));
 
-  // Column layout: Wk2 Wk3 Wk4 Wk5 WeeklyAvg 4WkPrior 4WkCurrent 4WkDiff 4Wk%Chg 3YrAvg YTDLast YTDCurrent ...
-  const ytdLast = parseInt(vals[10]);
-  const ytdCurrent = parseInt(vals[11]);
+  // YTDLast and YTDCurrent are typically the 11th and 12th numbers (indices 10, 11)
+  // But verify by checking: they should be the largest pair near the end before any % values
+  let ytdLast, ytdCurrent;
+  if (allNums.length >= 12) {
+    ytdLast = allNums[10];
+    ytdCurrent = allNums[11];
+  } else if (allNums.length >= 2) {
+    // Fallback: use the last two large numbers
+    ytdLast = allNums[allNums.length - 2];
+    ytdCurrent = allNums[allNums.length - 1];
+  } else {
+    throw new Error('Aurora: not enough numbers parsed. Found: ' + allNums.join(', '));
+  }
   console.log('Aurora: YTD current=' + ytdCurrent + ' prior=' + ytdLast);
 
   if (isNaN(ytdCurrent)) throw new Error('Aurora: could not parse YTD current. Tokens: ' + vals.slice(0, 15).join(' '));
@@ -2126,7 +2187,13 @@ async function fetchPortland() {
 
   rows.forEach(r => { if (r.year === yr && r.month > maxMonth) maxMonth = r.month; });
 
-  console.log('Portland: max month in ' + yr + ':', maxMonth);
+  // If no current year data, use max month from prior year for fair YTD comparison
+  if (maxMonth === 0) {
+    rows.forEach(r => { if (r.year === yr - 1 && r.month > maxMonth) maxMonth = r.month; });
+    console.log('Portland: no ' + yr + ' data, using prior year max month:', maxMonth);
+  } else {
+    console.log('Portland: max month in ' + yr + ':', maxMonth);
+  }
 
 
 
@@ -2134,7 +2201,7 @@ async function fetchPortland() {
 
   rows.forEach(r => {
 
-    if (r.month > maxMonth) return;
+    if (maxMonth > 0 && r.month > maxMonth) return;
 
     if (r.year === yr) ytd++;
 
