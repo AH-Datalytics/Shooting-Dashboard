@@ -1296,8 +1296,9 @@ async function fetchBuffalo() {
 
     if (isNaN(count)) continue;
 
-    // Use only "Shooting Incidents Involving Injury"
-    if (category.indexOf('shooting incidents') < 0) continue;
+    // Use "Shooting Victims (Persons Hit)" + "Individuals Killed By Gun Violence"
+    if (category.indexOf('shooting victims') < 0 && category.indexOf('persons hit') < 0 &&
+        category.indexOf('individuals killed') < 0 && category.indexOf('gun violence') < 0) continue;
 
     if (currMonths.has(month)) {
 
