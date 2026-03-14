@@ -964,15 +964,6 @@ var CITIES = [
       } catch(e) { return null; }
     }
   },
- {
-    id: 'omaha',
-    name: 'Omaha, NE',
-    note: 'Homicides + Non-Fatal Shooting Victims (Gun)',
-    type: 'Hom+NFS',
-    dataUrl: 'https://police.cityofomaha.org/opd-crime-statistics',
-    count: function(s) { return autoOrManualCount('omaha', 'omaha', s); },
-    latest: function() { return autoOrManualLatest('omaha', 'omaha'); }
-  },
   {
     id: 'miamidade',
     name: 'Miami-Dade County, FL',
