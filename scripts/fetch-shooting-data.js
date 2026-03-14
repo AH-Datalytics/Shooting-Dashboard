@@ -1242,7 +1242,29 @@ async function fetchBuffalo() {
   const currSuffix = '-' + String(yr).slice(2);
   const priorSuffix = '-' + String(yr - 1).slice(2);
   const currMonths = new Set(monthNames.map(m => m + currSuffix));
-  const priorMonths = new Set(monthNames.map(m => m + priorSuffix));
+
+  // First pass: find which month indices have current-year data
+  const rows = csvText.split('\n').map(function(l) { return l.replace(/\r/g, '').trim(); }).filter(Boolean);
+  console.log('Buffalo: total rows:', rows.length);
+
+  let maxMonthIdx = -1;
+  for (var i = 1; i < rows.length; i++) {
+    var cols = rows[i].split('\t');
+    if (cols.length < 3) continue;
+    var month = cols[0].trim();
+    if (currMonths.has(month)) {
+      var moName = month.split('-')[0];
+      var moIdx = monthNames.indexOf(moName);
+      if (moIdx > maxMonthIdx) maxMonthIdx = moIdx;
+    }
+  }
+
+  // Only include prior-year months up to the latest current-year month (fair YTD comparison)
+  const priorMonths = new Set();
+  for (var mi = 0; mi <= maxMonthIdx; mi++) {
+    priorMonths.add(monthNames[mi] + priorSuffix);
+  }
+  console.log('Buffalo: current year months through index', maxMonthIdx, '(' + monthNames[maxMonthIdx] + '), prior months:', [...priorMonths].join(', '));
 
 
 
@@ -1253,12 +1275,6 @@ async function fetchBuffalo() {
   let latestMonth = null;
 
   let foundAnyCurr = false;
-
-
-
-  const rows = csvText.split('\n').map(function(l) { return l.replace(/\r/g, '').trim(); }).filter(Boolean);
-
-  console.log('Buffalo: total rows:', rows.length);
 
 
 
