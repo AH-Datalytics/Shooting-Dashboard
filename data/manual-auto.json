@@ -3,56 +3,56 @@
     "ytd": 31,
     "prior": 43,
     "asof": "2026-03-14",
-    "fetchedAt": "2026-03-24T22:11:41.581Z",
+    "fetchedAt": "2026-03-25T10:23:34.198Z",
     "ok": true
   },
   "detroit": {
     "ytd": 56,
     "prior": 62,
     "asof": "2026-03-24",
-    "fetchedAt": "2026-03-24T22:11:41.581Z",
+    "fetchedAt": "2026-03-25T10:23:34.198Z",
     "ok": true
   },
   "durham": {
     "ytd": 49,
     "prior": 30,
     "asof": "2026-03-21",
-    "fetchedAt": "2026-03-24T22:11:41.581Z",
+    "fetchedAt": "2026-03-25T10:23:34.198Z",
     "ok": true
   },
   "milwaukee": {
     "ytd": 72,
-    "prior": 104,
+    "prior": 106,
     "asof": "2026-03-23",
-    "fetchedAt": "2026-03-24T22:11:41.581Z",
+    "fetchedAt": "2026-03-25T10:23:34.198Z",
     "ok": true
   },
   "memphis": {
     "ytd": 101,
-    "prior": 158,
-    "asof": "2026-03-23",
-    "fetchedAt": "2026-03-24T22:11:41.581Z",
+    "prior": 159,
+    "asof": "2026-03-24",
+    "fetchedAt": "2026-03-25T10:23:34.198Z",
     "ok": true
   },
   "miamidade": {
     "ytd": 22,
     "prior": 39,
     "asof": "2026-03-20",
-    "fetchedAt": "2026-03-24T22:11:41.581Z",
+    "fetchedAt": "2026-03-25T10:23:34.198Z",
     "ok": true
   },
   "pittsburgh": {
     "ytd": 18,
     "prior": 21,
     "asof": null,
-    "fetchedAt": "2026-03-24T22:11:41.581Z",
+    "fetchedAt": "2026-03-25T10:23:34.198Z",
     "ok": true
   },
   "portland": {
     "ytd": 22,
     "prior": 25,
     "asof": "2026-02-28",
-    "fetchedAt": "2026-03-24T22:11:41.581Z",
+    "fetchedAt": "2026-03-25T10:23:34.198Z",
     "ok": true
   },
   "buffalo": {
@@ -67,28 +67,28 @@
     "ytd": 55,
     "prior": 61,
     "asof": "2026-03-21",
-    "fetchedAt": "2026-03-24T22:11:41.581Z",
+    "fetchedAt": "2026-03-25T10:23:34.198Z",
     "ok": true
   },
   "hartford": {
     "ytd": 12,
     "prior": 5,
     "asof": "2026-02-28",
-    "fetchedAt": "2026-03-24T22:11:41.581Z",
+    "fetchedAt": "2026-03-25T10:23:34.198Z",
     "ok": true
   },
   "denver": {
     "ytd": 33,
     "prior": 42,
     "asof": "2026-03-23",
-    "fetchedAt": "2026-03-24T22:11:41.581Z",
+    "fetchedAt": "2026-03-25T10:23:34.198Z",
     "ok": true
   },
   "portsmouth": {
     "ytd": 17,
-    "prior": 36,
-    "asof": "2026-03-23",
-    "fetchedAt": "2026-03-24T22:11:41.581Z",
+    "prior": 24,
+    "asof": "2026-03-25",
+    "fetchedAt": "2026-03-25T10:23:34.198Z",
     "ok": true
   }
 }
