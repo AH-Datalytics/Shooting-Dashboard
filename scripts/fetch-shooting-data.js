@@ -885,7 +885,23 @@ async function fetchPittsburgh() {
 
   console.log('Pittsburgh post-nav snippet:', page2Text.substring(0, 400));
 
+  // Retry date extraction from page 2 if page 1 missed it
+  if (!asof) {
+    const dateMatch2 = page2Text.match(/Last Updated[:\s]+(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
+    if (dateMatch2) {
+      asof = `${dateMatch2[3]}-${dateMatch2[1].padStart(2,'0')}-${dateMatch2[2].padStart(2,'0')}`;
+      console.log('Pittsburgh asof (from page 2):', asof);
+    }
+  }
 
+  // Final fallback: any MM/DD/YYYY date in the page
+  if (!asof) {
+    const anyDate = page2Text.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (anyDate) {
+      asof = `${anyDate[3]}-${anyDate[1].padStart(2,'0')}-${anyDate[2].padStart(2,'0')}`;
+      console.log('Pittsburgh asof (fallback):', asof);
+    }
+  }
 
   const pageText = await page.evaluate(() => document.body.innerText);
 
