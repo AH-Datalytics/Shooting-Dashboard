@@ -974,14 +974,44 @@ var CITIES = [
     latest: function() { return autoLatest('miamidade'); }
   },
   {
-    id: 'buffalo',
-    name: 'New York GIVE (28 Agencies)',
-    noteHtml: '<a href="https://www.criminaljustice.ny.gov/crimnet/ojsa/tableau_Give_Shooting_Activity.htm" target="_blank" style="color:inherit;text-decoration:underline">More Info</a>',
+    id: 'albany',
+    name: 'Albany, NY',
+    noteHtml: '<a href="https://www.criminaljustice.ny.gov/crimnet/ojsa/tableau_Give_Shooting_Activity.htm" target="_blank" style="color:inherit;text-decoration:underline">NY GIVE</a>',
     note: 'Shooting Victims + Gun Homicides (GIVE)',
     type: 'Victims',
-    dataUrl: 'https://mypublicdashboard.ny.gov/t/OJRP_PUBLIC/views/GIVEInitiative/GIVE-LandingPage',
+    dataUrl: 'https://mypublicdashboard.ny.gov/t/OJRP_PUBLIC/views/GIVEInitiative/ShootingActivity',
+    count: function(s) { return autoCount('albany', s); },
+    latest: function() { return autoLatest('albany'); }
+  },
+  {
+    id: 'buffalo',
+    name: 'Buffalo, NY',
+    noteHtml: '<a href="https://www.criminaljustice.ny.gov/crimnet/ojsa/tableau_Give_Shooting_Activity.htm" target="_blank" style="color:inherit;text-decoration:underline">NY GIVE</a>',
+    note: 'Shooting Victims + Gun Homicides (GIVE)',
+    type: 'Victims',
+    dataUrl: 'https://mypublicdashboard.ny.gov/t/OJRP_PUBLIC/views/GIVEInitiative/ShootingActivity',
     count: function(s) { return autoCount('buffalo', s); },
     latest: function() { return autoLatest('buffalo'); }
+  },
+  {
+    id: 'syracuse',
+    name: 'Syracuse, NY',
+    noteHtml: '<a href="https://www.criminaljustice.ny.gov/crimnet/ojsa/tableau_Give_Shooting_Activity.htm" target="_blank" style="color:inherit;text-decoration:underline">NY GIVE</a>',
+    note: 'Shooting Victims + Gun Homicides (GIVE)',
+    type: 'Victims',
+    dataUrl: 'https://mypublicdashboard.ny.gov/t/OJRP_PUBLIC/views/GIVEInitiative/ShootingActivity',
+    count: function(s) { return autoCount('syracuse', s); },
+    latest: function() { return autoLatest('syracuse'); }
+  },
+  {
+    id: 'suffolkcounty',
+    name: 'Suffolk County, NY',
+    noteHtml: '<a href="https://www.criminaljustice.ny.gov/crimnet/ojsa/tableau_Give_Shooting_Activity.htm" target="_blank" style="color:inherit;text-decoration:underline">NY GIVE</a>',
+    note: 'Shooting Victims + Gun Homicides (GIVE)',
+    type: 'Victims',
+    dataUrl: 'https://mypublicdashboard.ny.gov/t/OJRP_PUBLIC/views/GIVEInitiative/ShootingActivity',
+    count: function(s) { return autoCount('suffolkcounty', s); },
+    latest: function() { return autoLatest('suffolkcounty'); }
   },
   {
     id: 'hartford',

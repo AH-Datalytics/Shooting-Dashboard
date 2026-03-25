@@ -55,13 +55,33 @@
     "fetchedAt": "2026-03-25T10:23:34.198Z",
     "ok": true
   },
-  "buffalo": {
-    "ytd": 55,
-    "prior": 84,
+  "albany": {
+    "ytd": 4,
+    "prior": 8,
     "asof": "2026-02-28",
-    "fetchedAt": "2026-03-23T22:10:55.046Z",
-    "ok": true,
-    "stale": true
+    "fetchedAt": "2026-03-25T20:00:00.000Z",
+    "ok": true
+  },
+  "buffalo": {
+    "ytd": 5,
+    "prior": 21,
+    "asof": "2026-02-28",
+    "fetchedAt": "2026-03-25T20:00:00.000Z",
+    "ok": true
+  },
+  "syracuse": {
+    "ytd": 7,
+    "prior": 5,
+    "asof": "2026-02-28",
+    "fetchedAt": "2026-03-25T20:00:00.000Z",
+    "ok": true
+  },
+  "suffolkcounty": {
+    "ytd": 7,
+    "prior": 7,
+    "asof": "2026-02-28",
+    "fetchedAt": "2026-03-25T20:00:00.000Z",
+    "ok": true
   },
   "nashville": {
     "ytd": 55,

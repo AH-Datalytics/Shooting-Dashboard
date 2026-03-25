@@ -995,284 +995,49 @@ async function fetchPittsburgh() {
 
 
 
-// ─── Buffalo (Tableau - NY GIVE Dashboard) ────────────────────────────────────
+// ─── NY GIVE Dashboard (Tableau - shared across Albany, Buffalo, Syracuse, Suffolk County) ───
 
+// Single browser session downloads CSV for each city sequentially, results cached.
 
+const GIVE_CITIES = {
+  albany:        { jurisdiction: 'Albany City PD',   label: 'Albany' },
+  buffalo:       { jurisdiction: 'Buffalo City PD',  label: 'Buffalo' },
+  syracuse:      { jurisdiction: 'Syracuse City PD', label: 'Syracuse' },
+  suffolkcounty: { jurisdiction: 'Suffolk County PD', label: 'Suffolk County' },
+};
 
-async function fetchBuffalo() {
+let _givePromise = null;
+function fetchGIVEAll() {
+  if (!_givePromise) _givePromise = _fetchGIVEAllImpl();
+  return _givePromise;
+}
 
-  const { chromium } = require('playwright');
-
-  const browser = await chromium.launch({ headless: true });
-
-  const page    = await browser.newPage();
-
-  await page.setViewportSize({ width: 1536, height: 1024 });
-
-  page.setDefaultTimeout(30000);
-
-
-
+function parseGIVECsv(csvText, cityLabel) {
   const yr = new Date().getFullYear();
-
-
-
-  async function forceClick(locator, timeout) {
-
-    await locator.click({ force: true, timeout: timeout || 8000 });
-
-  }
-
-
-
-  console.log('Buffalo: loading GIVE dashboard...');
-
-  await page.goto('https://mypublicdashboard.ny.gov/t/OJRP_PUBLIC/views/GIVEInitiative/GIVE-LandingPage', { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-  await page.waitForTimeout(10000);
-
-
-
-  console.log('Buffalo: clicking Shooting Activity tab...');
-
-  try {
-
-    await forceClick(page.locator('text=GIVE-Shooting Activity').first());
-
-    await page.waitForTimeout(8000);
-
-    console.log('Buffalo: on Shooting Activity tab');
-
-  } catch(e) { console.log('Buffalo: tab click failed:', e.message); }
-
-
-
-  console.log('Buffalo: opening Jurisdiction dropdown...');
-
-  try {
-
-    const allEls = page.locator('text=(All)');
-
-    const count = await allEls.count();
-
-    console.log('Buffalo: (All) count:', count);
-
-    await forceClick(allEls.nth(count >= 2 ? 1 : 0));
-
-    await page.waitForTimeout(3000);
-
-    console.log('Buffalo: jurisdiction dropdown opened');
-
-  } catch(e) { console.log('Buffalo: jurisdiction open failed:', e.message); }
-
-
-
-  console.log('Buffalo: deselecting all...');
-
-  try {
-
-    const allEls = page.locator('text=(All)');
-
-    const count = await allEls.count();
-
-    console.log('Buffalo: (All) count after open:', count);
-
-    await forceClick(allEls.last());
-
-    await page.waitForTimeout(1000);
-
-    console.log('Buffalo: deselected all');
-
-  } catch(e) { console.log('Buffalo: deselect all failed:', e.message); }
-
-
-
-  console.log('Buffalo: selecting Buffalo City PD...');
-
-  try {
-
-    await forceClick(page.locator('text=Buffalo City PD').first());
-
-    await page.waitForTimeout(1000);
-
-    console.log('Buffalo: selected Buffalo City PD');
-
-  } catch(e) { console.log('Buffalo: Buffalo City PD click failed:', e.message); }
-
-
-
-  console.log('Buffalo: clicking Apply...');
-
-  try {
-
-    await forceClick(page.locator('text=Apply').first());
-
-    await page.waitForTimeout(6000);
-
-    console.log('Buffalo: applied filter');
-
-  } catch(e) { console.log('Buffalo: Apply failed:', e.message); }
-
-
-
-  console.log('Buffalo: clicking Monthly Data...');
-
-  try {
-
-    await forceClick(page.locator('text=Monthly Data').first());
-
-    await page.waitForTimeout(8000);
-
-    console.log('Buffalo: switched to Monthly Data');
-
-  } catch(e) { console.log('Buffalo: Monthly Data click failed:', e.message); }
-
-
-
-  console.log('Buffalo: clicking Download toolbar button...');
-
-  try {
-
-    await forceClick(page.locator('[data-tb-test-id="viz-viewer-toolbar-button-download"]').first());
-
-    await page.waitForTimeout(2000);
-
-    console.log('Buffalo: download menu opened');
-
-  } catch(e) { console.log('Buffalo: download button failed:', e.message); }
-
-
-
-  console.log('Buffalo: clicking Crosstab...');
-
-  try {
-
-    await forceClick(page.locator('text=Crosstab').first());
-
-    await page.waitForTimeout(2000);
-
-    console.log('Buffalo: crosstab dialog opened');
-
-  } catch(e) { console.log('Buffalo: Crosstab click failed:', e.message); }
-
-
-
-  console.log('Buffalo: selecting Monthly Total Overview...');
-
-  try {
-
-    await forceClick(page.locator('text=Monthly Total Overview').first(), 5000);
-
-    await page.waitForTimeout(1000);
-
-    console.log('Buffalo: selected Monthly Total Overview');
-
-  } catch(e) { console.log('Buffalo: sheet selection failed:', e.message); }
-
-
-
-  console.log('Buffalo: selecting CSV...');
-
-  try {
-
-    await forceClick(page.locator('text=CSV').first(), 5000);
-
-    await page.waitForTimeout(500);
-
-    console.log('Buffalo: CSV selected');
-
-  } catch(e) { console.log('Buffalo: CSV select failed:', e.message); }
-
-
-
-  console.log('Buffalo: clicking Download button...');
-
-  let csvText = null;
-
-  try {
-
-    const [ download ] = await Promise.all([
-
-      page.waitForEvent('download', { timeout: 30000 }),
-
-      forceClick(page.locator('button:has-text("Download")').last())
-
-    ]);
-
-    const stream = await download.createReadStream();
-
-    const chunks = [];
-
-    await new Promise((res, rej) => {
-
-      stream.on('data', c => chunks.push(c));
-
-      stream.on('end', res);
-
-      stream.on('error', rej);
-
-    });
-
-    const buf = Buffer.concat(chunks);
-
-    csvText = buf.toString('utf16le').replace(/^\uFEFF/, '');
-
-    console.log('Buffalo: CSV downloaded, bytes:', buf.length);
-
-    console.log('Buffalo: CSV preview:', csvText.substring(0, 200));
-
-  } catch(e) {
-
-    console.log('Buffalo: CSV download failed:', e.message);
-
-  }
-
-
-
-  await browser.close();
-
-
-
-  if (!csvText) throw new Error('Buffalo: could not download CSV');
-
-
-
-  // Build month suffixes for current and prior year (Jan-26, Feb-26, ...)
   const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const currSuffix = '-' + String(yr).slice(2);
   const priorSuffix = '-' + String(yr - 1).slice(2);
   const currMonths = new Set(monthNames.map(m => m + currSuffix));
 
-  // First pass: find which month indices have current-year data
   const rows = csvText.split('\n').map(function(l) { return l.replace(/\r/g, '').trim(); }).filter(Boolean);
-  console.log('Buffalo: total rows:', rows.length);
+  console.log(cityLabel + ': total rows:', rows.length);
 
+  // Find latest current-year month
   let maxMonthIdx = -1;
   for (var i = 1; i < rows.length; i++) {
     var cols = rows[i].split('\t');
     if (cols.length < 3) continue;
     var month = cols[0].trim();
     if (currMonths.has(month)) {
-      var moName = month.split('-')[0];
-      var moIdx = monthNames.indexOf(moName);
+      var moIdx = monthNames.indexOf(month.split('-')[0]);
       if (moIdx > maxMonthIdx) maxMonthIdx = moIdx;
     }
   }
 
-  // Only include prior-year months up to the latest current-year month (fair YTD comparison)
   const priorMonths = new Set();
   for (var mi = 0; mi <= maxMonthIdx; mi++) {
     priorMonths.add(monthNames[mi] + priorSuffix);
   }
-  console.log('Buffalo: current year months through index', maxMonthIdx, '(' + monthNames[maxMonthIdx] + '), prior months:', [...priorMonths].join(', '));
-
-
-
-  let ytd = 0, prior = 0;
-
-  let latestMonth = null;
-
-  let foundAnyCurr = false;
 
   // Deduplicate rows (Tableau crosstab exports duplicate rows)
   var seen = new Set();
@@ -1280,63 +1045,36 @@ async function fetchBuffalo() {
   for (var i = 1; i < rows.length; i++) {
     if (!seen.has(rows[i])) { seen.add(rows[i]); dedupedRows.push(rows[i]); }
   }
-  console.log('Buffalo: deduped from', rows.length, 'to', dedupedRows.length, 'rows');
+
+  let ytd = 0, prior = 0, latestMonth = null, foundAnyCurr = false;
 
   for (var i = 1; i < dedupedRows.length; i++) {
-
     var cols = dedupedRows[i].split('\t');
-
     if (cols.length < 3) continue;
-
     var month    = cols[0].trim();
-
     var category = cols[1].trim().toLowerCase();
-
     var count    = parseInt(cols[2].trim().replace(/,/g, ''));
-
     if (isNaN(count)) continue;
 
-    // Use "Shooting Victims (Persons Hit)" + "Individuals Killed By Gun Violence"
     if (category.indexOf('shooting victims') < 0 && category.indexOf('persons hit') < 0 &&
         category.indexOf('individuals killed') < 0 && category.indexOf('gun violence') < 0) continue;
 
     if (currMonths.has(month)) {
-
       foundAnyCurr = true;
-
       ytd += count;
-
       latestMonth = month;
-
     }
-
     if (priorMonths.has(month)) {
-
       prior += count;
-
     }
-
   }
 
-
-
-  console.log('Buffalo parsed: ytd=' + ytd + ' prior=' + prior + ' latestMonth=' + latestMonth);
-
-
+  console.log(cityLabel + ' parsed: ytd=' + ytd + ' prior=' + prior + ' latestMonth=' + latestMonth);
 
   if (!foundAnyCurr) {
-
-    var allMonths = dedupedRows.slice(1).map(function(r) { return r.split('\t')[0]; });
-
-    var unique = allMonths.filter(function(v, i, a) { return a.indexOf(v) === i; });
-
-    throw new Error('Buffalo: no current year data found. Available months: ' + unique.slice(-6).join(', '));
-
+    throw new Error(cityLabel + ': no current year data found');
   }
 
-
-
-  // Determine asof date from latest month found
   var asofDate = yr + '-01-31';
   if (latestMonth) {
     var moIdx = monthNames.indexOf(latestMonth.split('-')[0]);
@@ -1347,7 +1085,107 @@ async function fetchBuffalo() {
   }
 
   return { ytd, prior, asof: asofDate };
+}
 
+async function _fetchGIVEAllImpl() {
+  const { chromium } = require('playwright');
+  const browser = await chromium.launch({ headless: true });
+  const results = {};
+
+  // Process each city in a separate page using URL parameter filtering
+  const cityKeys = Object.keys(GIVE_CITIES);
+  for (var ci = 0; ci < cityKeys.length; ci++) {
+    var key = cityKeys[ci];
+    var city = GIVE_CITIES[key];
+    console.log('\nGIVE: === Processing ' + city.label + ' (' + city.jurisdiction + ') ===');
+
+    var page = await browser.newPage();
+    await page.setViewportSize({ width: 1536, height: 1024 });
+    page.setDefaultTimeout(30000);
+
+    try {
+      // Load Shooting Activity with jurisdiction pre-filtered via URL parameter
+      var url = 'https://mypublicdashboard.ny.gov/t/OJRP_PUBLIC/views/GIVEInitiative/ShootingActivity?Jurisdiction=' + encodeURIComponent(city.jurisdiction);
+      console.log(city.label + ': loading ' + url);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForTimeout(15000);
+
+      // Switch to Monthly Data
+      console.log(city.label + ': clicking Monthly Data...');
+      await page.locator('text=Monthly Data').first().click({ force: true });
+      await page.waitForTimeout(8000);
+
+      // Download → Crosstab → Monthly Total Overview → CSV
+      console.log(city.label + ': downloading CSV...');
+      await page.locator('[data-tb-test-id="viz-viewer-toolbar-button-download"]').first().click({ force: true });
+      await page.waitForTimeout(2000);
+
+      await page.locator('div').filter({ hasText: /^Crosstab$/ }).first().click({ force: true });
+      await page.waitForTimeout(2000);
+
+      try {
+        await page.locator('text=Monthly Total Overview').first().click({ force: true, timeout: 5000 });
+        await page.waitForTimeout(1000);
+      } catch(e) { /* may already be selected */ }
+
+      try {
+        await page.locator('text=CSV').first().click({ force: true, timeout: 5000 });
+        await page.waitForTimeout(500);
+      } catch(e) { /* may already be selected */ }
+
+      var [ download ] = await Promise.all([
+        page.waitForEvent('download', { timeout: 30000 }),
+        page.locator('button:has-text("Download")').last().click({ force: true })
+      ]);
+      var stream = await download.createReadStream();
+      var chunks = [];
+      await new Promise(function(res, rej) {
+        stream.on('data', function(c) { chunks.push(c); });
+        stream.on('end', res);
+        stream.on('error', rej);
+      });
+      var buf = Buffer.concat(chunks);
+      var csvText = buf.toString('utf16le').replace(/^\uFEFF/, '');
+      console.log(city.label + ': CSV downloaded, bytes:', buf.length);
+
+      // Parse CSV
+      results[key] = parseGIVECsv(csvText, city.label);
+      console.log(city.label + ': OK — ytd=' + results[key].ytd + ' prior=' + results[key].prior);
+
+    } catch(e) {
+      console.log(city.label + ': FAILED — ' + e.message);
+      results[key] = null;
+    }
+
+    await page.close();
+  }
+
+  await browser.close();
+  return results;
+}
+
+async function fetchBuffalo() {
+  var all = await fetchGIVEAll();
+  if (!all.buffalo) throw new Error('Buffalo: no data from GIVE session');
+  return all.buffalo;
+}
+
+async function fetchAlbany() {
+  var all = await fetchGIVEAll();
+  if (!all.albany) throw new Error('Albany: no data from GIVE session');
+  return all.albany;
+}
+
+async function fetchSyracuse() {
+  var all = await fetchGIVEAll();
+  if (!all.syracuse) throw new Error('Syracuse: no data from GIVE session');
+  return all.syracuse;
+}
+
+async function fetchSuffolkCounty() {
+  var all = await fetchGIVEAll();
+  if (!all.suffolkcounty) throw new Error('Suffolk County: no data from GIVE session');
+  return all.suffolkcounty;
 }
 
 
@@ -1775,7 +1613,13 @@ async function main() {
 
     safe('Portland',   fetchPortland,   60000),
 
-    safe('Buffalo',    fetchBuffalo,    120000),
+    safe('Buffalo',    fetchBuffalo,    180000),
+
+    safe('Albany',     fetchAlbany,     180000),
+
+    safe('Syracuse',   fetchSyracuse,   180000),
+
+    safe('SuffolkCounty', fetchSuffolkCounty, 180000),
 
     safe('Nashville',  fetchNashville,  180000),
 
