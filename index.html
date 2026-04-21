@@ -1104,6 +1104,15 @@ var CITIES = [
     dataUrl: 'https://app.powerbigov.us/view?r=eyJrIjoiZDc3ZmQyYzMtOTgyYi00ODQzLTk4ZWUtZWQyY2ZkODM5ZWNkIiwidCI6ImM3N2RiNGQ4LWEwZjUtNDU0YS05MmMxLWI3ZDg0YzY0ZmQ0NCJ9',
     count: function(s) { return autoCount('portsmouth', s); },
     latest: function() { return autoLatest('portsmouth'); }
+  },
+  {
+    id: 'wilmington',
+    name: 'Wilmington, DE',
+    note: 'Shooting Victims (WPD CompStat PDF)',
+    type: 'Victims',
+    dataUrl: 'https://www.wilmingtonde.gov/government/public-safety/wilmington-police-department/compstat-reports',
+    count: function(s) { return autoCount('wilmington', s); },
+    latest: function() { return autoLatest('wilmington'); }
   }
 ];
 

@@ -1645,6 +1645,8 @@ async function main() {
 
     safe('Portsmouth',  fetchPortsmouth,  120000),
 
+    safe('Wilmington',  fetchWilmington,  120000),
+
     // Omaha removed — Akamai blocks all automated access
   ]);
 
@@ -2370,6 +2372,101 @@ async function fetchHartford() {
 
 
 
+
+
+// ─── Wilmington (WPD CompStat PDF) ──────────────────────────────────────────
+
+async function fetchWilmington() {
+  const { chromium } = require('playwright');
+  // Site blocks headless browsers (403), so launch headed with anti-detection.
+  // GitHub Actions uses Xvfb to provide a virtual display.
+  const browser = await chromium.launch({
+    headless: false,
+    args: ['--disable-blink-features=AutomationControlled', '--no-sandbox']
+  });
+  const context = await browser.newContext({
+    userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+  });
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+  });
+  const page = await context.newPage();
+
+  try {
+    // Visit the CompStat page to get session cookies (direct PDF fetch returns 403)
+    const listUrl = 'https://www.wilmingtonde.gov/government/public-safety/wilmington-police-department/compstat-reports';
+    console.log('Wilmington: loading CompStat page...');
+    await page.goto(listUrl, { waitUntil: 'networkidle', timeout: 60000 });
+    await page.waitForTimeout(5000);
+
+    // Find the PDF link — text always starts with "WPD CompStat Report"
+    const pdfUrl = await page.evaluate(() => {
+      const links = Array.from(document.querySelectorAll('a'));
+      const link = links.find(a => a.textContent.trim().startsWith('WPD CompStat Report'));
+      return link ? link.href : null;
+    });
+    if (!pdfUrl) throw new Error('Wilmington: could not find CompStat PDF link on page');
+    console.log('Wilmington: PDF URL:', pdfUrl);
+
+    // Download PDF via in-page fetch (uses session cookies)
+    const base64 = await page.evaluate(async (url) => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const buf = await r.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary);
+    }, pdfUrl);
+
+    const pdfBuffer = Buffer.from(base64, 'base64');
+    console.log('Wilmington: PDF downloaded (' + (pdfBuffer.length / 1024).toFixed(0) + ' KB)');
+
+    // Parse page 1 (Citywide)
+    const tokens = await extractPdfTokens(pdfBuffer, 1);
+    const joined = tokens.join(' | ');
+
+    // Extract date range from header: "04/06/26 Through 04/12/26"
+    var dateMatch = joined.match(/(\d{2}\/\d{2}\/\d{2})\s+Through\s+(\d{2}\/\d{2}\/\d{2})/i);
+    var asof = null;
+    if (dateMatch) {
+      var parts = dateMatch[2].split('/');
+      var yy = parseInt(parts[2]);
+      var yyyy = yy < 50 ? 2000 + yy : 1900 + yy;
+      asof = yyyy + '-' + parts[0] + '-' + parts[1];
+    }
+
+    // Find "Shooting Victims" row and extract YTD columns
+    // PDF layout: LAST 7 DAYS (2026, 2025, %CHG) | LAST 28 DAYS (2026, 2025, %CHG) | YEAR TO DATE (2026, 2025, %CHG) | ...
+    // That's positions: [0]=7d_2026 [1]=7d_2025 [2]=7d_%chg [3]=28d_2026 [4]=28d_2025 [5]=28d_%chg [6]=ytd_2026 [7]=ytd_2025 ...
+    var svIdx = tokens.findIndex(t => t === 'Shooting Victims');
+    if (svIdx === -1) throw new Error('Wilmington: could not find "Shooting Victims" row in PDF');
+
+    // Collect numeric values after the label
+    var nums = [];
+    for (var i = svIdx + 1; i < tokens.length && nums.length < 10; i++) {
+      var t = tokens[i].replace(/[‐−–]/g, '-').replace(/,/g, '').trim();
+      if (t === '*') { nums.push(0); continue; }
+      if (/^-?\d+%?$/.test(t)) {
+        nums.push(parseInt(t));
+      } else if (nums.length > 0) {
+        break; // hit next row label
+      }
+    }
+
+    // YTD 2026 is at index 6, YTD 2025 at index 7
+    var ytd = nums[6];
+    var prior = nums[7];
+
+    console.log('Wilmington: YTD=' + ytd + ' prior=' + prior + ' asof=' + asof);
+
+    if (ytd == null || isNaN(ytd)) throw new Error('Wilmington: failed to parse YTD from PDF. nums=' + JSON.stringify(nums));
+
+    return { ytd, prior, asof };
+  } finally {
+    await browser.close();
+  }
+}
 
 
 // ─── Nashville (MNPD Crime Initiative Book PDF) ─────────────────────────────

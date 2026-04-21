@@ -38,7 +38,12 @@ jobs:
       - name: Fetch shooting data
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: node scripts/fetch-shooting-data.js
+          DISPLAY: ':99'
+        run: |
+          sudo apt-get install -y xvfb
+          Xvfb :99 -screen 0 1920x1080x24 &
+          sleep 1
+          node scripts/fetch-shooting-data.js
 
       - name: Commit updated data
         run: |
