@@ -2424,11 +2424,10 @@ async function fetchWilmington() {
 
     // Parse page 1 (Citywide)
     const tokens = await extractPdfTokens(pdfBuffer, 1);
-    const joined = tokens.join(' | ');
+    var joined = tokens.join(' ');
 
     // Extract date range from header: "04/06/26 Through 04/12/26"
-    var joinedAll = tokens.join(' ');
-    var dateMatch = joinedAll.match(/(\d{2}\/\d{2}\/\d{2})\s+Through\s+(\d{2}\/\d{2}\/\d{2})/i);
+    var dateMatch = joined.match(/(\d{2}\/\d{2}\/\d{2})\s+Through\s+(\d{2}\/\d{2}\/\d{2})/i);
     var asof = null;
     if (dateMatch) {
       var parts = dateMatch[2].split('/');
@@ -2441,7 +2440,6 @@ async function fetchWilmington() {
     // PDF layout per row: val val %chg val val %chg val val %chg ...
     // Groups of 3: LAST 7 DAYS (2026, 2025, %CHG) | LAST 28 DAYS | YEAR TO DATE
     // YTD 2026 = group 3, position 1 = overall index 6; YTD 2025 = index 7
-    var joined = tokens.join(' ');
     var svMatch = joined.match(/Shooting\s+Victims\s+([\s\S]*?)(?:\*?Juv|Theft|$)/i);
     if (!svMatch) throw new Error('Wilmington: could not find "Shooting Victims" row in PDF. Sample: ' + tokens.slice(0, 30).join('|'));
 
