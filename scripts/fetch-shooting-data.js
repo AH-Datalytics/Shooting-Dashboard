@@ -2427,7 +2427,8 @@ async function fetchWilmington() {
     const joined = tokens.join(' | ');
 
     // Extract date range from header: "04/06/26 Through 04/12/26"
-    var dateMatch = joined.match(/(\d{2}\/\d{2}\/\d{2})\s+Through\s+(\d{2}\/\d{2}\/\d{2})/i);
+    var joinedAll = tokens.join(' ');
+    var dateMatch = joinedAll.match(/(\d{2}\/\d{2}\/\d{2})\s+Through\s+(\d{2}\/\d{2}\/\d{2})/i);
     var asof = null;
     if (dateMatch) {
       var parts = dateMatch[2].split('/');
@@ -2437,22 +2438,19 @@ async function fetchWilmington() {
     }
 
     // Find "Shooting Victims" row and extract YTD columns
-    // PDF layout: LAST 7 DAYS (2026, 2025, %CHG) | LAST 28 DAYS (2026, 2025, %CHG) | YEAR TO DATE (2026, 2025, %CHG) | ...
-    // That's positions: [0]=7d_2026 [1]=7d_2025 [2]=7d_%chg [3]=28d_2026 [4]=28d_2025 [5]=28d_%chg [6]=ytd_2026 [7]=ytd_2025 ...
-    var svIdx = tokens.findIndex(t => t === 'Shooting Victims');
-    if (svIdx === -1) throw new Error('Wilmington: could not find "Shooting Victims" row in PDF');
+    // PDF layout per row: val val %chg val val %chg val val %chg ...
+    // Groups of 3: LAST 7 DAYS (2026, 2025, %CHG) | LAST 28 DAYS | YEAR TO DATE
+    // YTD 2026 = group 3, position 1 = overall index 6; YTD 2025 = index 7
+    var joined = tokens.join(' ');
+    var svMatch = joined.match(/Shooting\s+Victims\s+([\s\S]*?)(?:\*?Juv|Theft|$)/i);
+    if (!svMatch) throw new Error('Wilmington: could not find "Shooting Victims" row in PDF. Sample: ' + tokens.slice(0, 30).join('|'));
 
-    // Collect numeric values after the label
-    var nums = [];
-    for (var i = svIdx + 1; i < tokens.length && nums.length < 10; i++) {
-      var t = tokens[i].replace(/[‐−–]/g, '-').replace(/,/g, '').trim();
-      if (t === '*') { nums.push(0); continue; }
-      if (/^-?\d+%?$/.test(t)) {
-        nums.push(parseInt(t));
-      } else if (nums.length > 0) {
-        break; // hit next row label
-      }
-    }
+    var afterSV = svMatch[1];
+    var numTokens = afterSV.match(/(\*|-?\d+%?)/g) || [];
+    var nums = numTokens.map(function(t) {
+      if (t === '*') return 0;
+      return parseInt(t.replace(/%$/, ''));
+    });
 
     // YTD 2026 is at index 6, YTD 2025 at index 7
     var ytd = nums[6];
