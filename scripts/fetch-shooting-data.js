@@ -1121,7 +1121,7 @@ async function _fetchGIVEAllImpl() {
 
     try {
       // Load Shooting Activity with jurisdiction pre-filtered via URL parameter
-      var url = 'https://mypublicdashboard.ny.gov/t/OJRP_PUBLIC/views/GIVEInitiative/ShootingActivity?Jurisdiction=' + encodeURIComponent(city.jurisdiction);
+      var url = 'https://mypublicdashboard.ny.gov/t/OJRP_PUBLIC/views/GIVEShootingActivity/ShootingActivity?Jurisdiction=' + encodeURIComponent(city.jurisdiction);
       console.log(city.label + ': loading ' + url);
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
       await page.waitForTimeout(15000);
