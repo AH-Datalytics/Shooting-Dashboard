@@ -757,6 +757,15 @@ async function fetchMemphis() {
 
   }
 
+  // Plausibility: if YTD=0 past January, the dashboard didn't render properly
+  if (ytd === 0 && new Date().getMonth() > 0) {
+
+    console.log('Memphis: ytd=0 past January is implausible, resetting for vision fallback');
+
+    ytd = null;
+
+  }
+
 
 
   if (ytd === null) {
@@ -789,7 +798,7 @@ async function fetchMemphis() {
 
 
 
-  if (ytd === null) throw new Error('Could not find ' + yr + ' Non-Fatal Shooting value. Chart text sample: ' + chartText.substring(0, 800));
+  if (ytd === null || (ytd === 0 && new Date().getMonth() > 0)) throw new Error('Could not find ' + yr + ' Non-Fatal Shooting value (ytd=' + ytd + '). Chart text sample: ' + chartText.substring(0, 800));
 
 
 
@@ -2427,7 +2436,9 @@ async function fetchWilmington() {
     var joined = tokens.join(' ');
 
     // Extract date range from header: "04/06/26 Through 04/12/26"
-    var dateMatch = joined.match(/(\d{2}\/\d{2}\/\d{2})\s+Through\s+(\d{2}\/\d{2}\/\d{2})/i);
+    // PDF tokenizer may split dates with spaces around slashes, e.g. "04/13 /26 Through 04/1 9/ 26"
+    var collapsed = joined.replace(/\s*\/\s*/g, '/');
+    var dateMatch = collapsed.match(/(\d{2}\/\d{2}\/\d{2})\s+Through\s+(\d{2}\/\d{2}\/\d{2})/i);
     var asof = null;
     if (dateMatch) {
       var parts = dateMatch[2].split('/');
