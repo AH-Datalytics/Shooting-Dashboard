@@ -2409,12 +2409,14 @@ async function fetchWilmington() {
     await page.waitForTimeout(5000);
 
     // Find the PDF link — text always starts with "WPD CompStat Report"
-    const pdfUrl = await page.evaluate(() => {
+    const linkInfo = await page.evaluate(() => {
       const links = Array.from(document.querySelectorAll('a'));
       const link = links.find(a => a.textContent.trim().startsWith('WPD CompStat Report'));
-      return link ? link.href : null;
+      return link ? { href: link.href, text: link.textContent.trim() } : null;
     });
-    if (!pdfUrl) throw new Error('Wilmington: could not find CompStat PDF link on page');
+    if (!linkInfo) throw new Error('Wilmington: could not find CompStat PDF link on page');
+    var pdfUrl = linkInfo.href;
+    console.log('Wilmington: PDF link:', linkInfo.text);
     console.log('Wilmington: PDF URL:', pdfUrl);
 
     // Download PDF via in-page fetch (uses session cookies)
@@ -2435,16 +2437,14 @@ async function fetchWilmington() {
     const tokens = await extractPdfTokens(pdfBuffer, 1);
     var joined = tokens.join(' ');
 
-    // Extract date range from header: "04/06/26 Through 04/12/26"
-    // PDF tokenizer may split dates with spaces around slashes, e.g. "04/13 /26 Through 04/1 9/ 26"
-    var collapsed = joined.replace(/\s*\/\s*/g, '/');
-    var dateMatch = collapsed.match(/(\d{2}\/\d{2}\/\d{2})\s+Through\s+(\d{2}\/\d{2}\/\d{2})/i);
+    // Extract as-of date from the link text, e.g. "WPD CompStat Report - April 13 through April 19, 2026"
+    // This is more reliable than parsing fragmented PDF tokens
     var asof = null;
-    if (dateMatch) {
-      var parts = dateMatch[2].split('/');
-      var yy = parseInt(parts[2]);
-      var yyyy = yy < 50 ? 2000 + yy : 1900 + yy;
-      asof = yyyy + '-' + parts[0] + '-' + parts[1];
+    var months = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12};
+    var linkDateMatch = linkInfo.text.match(/through\s+(\w+)\s+(\d{1,2}),?\s+(\d{4})/i);
+    if (linkDateMatch) {
+      var mo = months[linkDateMatch[1].toLowerCase()];
+      if (mo) asof = linkDateMatch[3] + '-' + String(mo).padStart(2, '0') + '-' + String(parseInt(linkDateMatch[2])).padStart(2, '0');
     }
 
     // Find "Shooting Victims" row and extract YTD columns
