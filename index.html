@@ -8,18 +8,18 @@
 <style>
   :root {
     --bg: #e8f0f8;
-    --surface: #ffffff;
-    --surface2: #edf5fc;
-    --border: #d4e4f0;
-    --border2: #b8d4e8;
-    --accent: #2d5f8a;
-    --text: #1a3a5c;
-    --muted: #7a9bb8;
-    --muted2: #4a7aaa;
-    --green: #16a34a;
-    --red: #dc2626;
+    --surface: #F5F0E8;
+    --surface2: #efe9df;
+    --border: #ddd8ce;
+    --border2: #c8c2b8;
+    --accent: #2d3d4a;
+    --text: #1e2a35;
+    --muted: #5a6a7a;
+    --muted2: #3a4a57;
+    --green: #1a7a3a;
+    --red: #c0392b;
     --yellow: #ca8a04;
-    --rule: #2d5f8a;
+    --rule: #2d3d4a;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font-family: 'DM Sans', system-ui, sans-serif; font-size: 15px; min-height: 100vh; -webkit-font-smoothing: antialiased; }
@@ -125,7 +125,7 @@
   thead th.r { text-align: right; }
   tbody tr { border-bottom: 1px solid var(--border); transition: background 0.08s; }
   tbody tr:last-child { border-bottom: none; }
-  tbody tr:hover { background: #edf5fc; }
+  tbody tr:hover { background: #efe9df; }
   td { padding: 13px 14px; vertical-align: middle; }
 
   .city-name { font-family: 'DM Sans', system-ui, sans-serif; font-size: 15px; font-weight: 600; color: var(--text); white-space: nowrap; }
@@ -159,8 +159,8 @@
     white-space: nowrap;
   }
 
-  .manual-row { background: #fafaf8; }
-  .manual-row:hover { background: #f5f5f2 !important; }
+  .manual-row { background: #efe9df; }
+  .manual-row:hover { background: #e8e2d8 !important; }
   .divider-row td { padding: 5px 16px; background: var(--surface2); border-bottom: 1px solid var(--border); }
   .divider-row span { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--muted); letter-spacing: 1.5px; text-transform: uppercase; }
   .manual-btn {
@@ -176,7 +176,7 @@
   }
   .manual-modal-overlay.open { display: flex; }
   .manual-modal {
-    background: #fff; border: 1.5px solid var(--border);
+    background: #F5F0E8; border: 1.5px solid var(--border);
     border-top: 3px solid var(--accent); border-radius: 8px; padding: 28px 32px; width: 360px; max-width: 90vw;
     box-shadow: 0 8px 32px rgba(26,58,92,0.15);
   }
@@ -190,7 +190,7 @@
     letter-spacing: 2px; text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
   }
   .manual-field input {
-    width: 100%; background: #fff; border: 1px solid var(--border2);
+    width: 100%; background: #F5F0E8; border: 1px solid var(--border2);
     color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 13px;
     padding: 9px 12px; outline: none;
   }
