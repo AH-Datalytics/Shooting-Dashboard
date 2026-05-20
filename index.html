@@ -211,6 +211,31 @@
 
   #prog { position: fixed; top: 0; left: 0; height: 2px; width: 0%; background: var(--text); transition: width 0.25s ease; z-index: 999; }
 
+  /* ── Trend chart ── */
+  .trend-card {
+    margin-top: 24px;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(26,58,92,.04);
+    background: var(--surface);
+  }
+  .trend-header {
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px;
+  }
+  .trend-title {
+    font-family: 'DM Sans', system-ui, sans-serif;
+    font-size: 14px; font-weight: 600; color: var(--text);
+  }
+  .trend-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; color: var(--muted); letter-spacing: 0.5px;
+  }
+  .trend-body { padding: 12px 16px 16px; }
+  #trendCanvas { width: 100%; height: 180px; display: block; }
+
   footer {
     margin-top: 32px; padding-top: 16px;
     border-top: 1px solid var(--border);
@@ -320,6 +345,16 @@
         <tr><td colspan="7" class="empty-state"><span class="big">READY</span><p>CLICK REFRESH ALL TO FETCH LIVE DATA</p></td></tr>
       </tbody>
     </table>
+  </div>
+
+  <div class="trend-card" id="trendCard" style="display:none">
+    <div class="trend-header">
+      <span class="trend-title">Aggregate YoY % Change — Sample Trendline</span>
+      <span class="trend-sub" id="trendSub"></span>
+    </div>
+    <div class="trend-body">
+      <canvas id="trendCanvas"></canvas>
+    </div>
   </div>
 
   <footer>
@@ -1603,6 +1638,109 @@ function exportCSV() {
   a.download = 'shootings_' + year + '_' + now + '.csv';
   a.click();
 }
+
+// ─── Trend chart ───────────────────────────────────────────────────────────────
+(async function drawTrend() {
+  try {
+    var resp = await fetch('data/trend.json');
+    if (!resp.ok) return;
+    var raw = await resp.json();
+    var data = raw.filter(function(d) { return d.pct !== null; });
+    if (data.length < 3) return;
+
+    document.getElementById('trendCard').style.display = '';
+    var first = data[0].date, last = data[data.length - 1].date;
+    document.getElementById('trendSub').textContent =
+      first.replace(/-/g, '/').slice(5) + ' – ' + last.replace(/-/g, '/').slice(5) +
+      '  ·  ' + data.length + ' DAYS  ·  SERVER-TRACKED SAMPLE';
+
+    var canvas = document.getElementById('trendCanvas');
+    var dpr = window.devicePixelRatio || 1;
+    var rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    var ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    var W = rect.width, H = rect.height;
+
+    var vals = data.map(function(d) { return d.pct; });
+    var minV = Math.min.apply(null, vals);
+    var maxV = Math.max.apply(null, vals);
+    // Round to nice bounds
+    minV = Math.floor(minV / 5) * 5;
+    maxV = Math.ceil(maxV / 5) * 5;
+    if (minV === maxV) { minV -= 5; maxV += 5; }
+    var range = maxV - minV;
+
+    var padL = 42, padR = 12, padT = 8, padB = 24;
+    var plotW = W - padL - padR, plotH = H - padT - padB;
+
+    function xPos(i) { return padL + (i / (data.length - 1)) * plotW; }
+    function yPos(v) { return padT + (1 - (v - minV) / range) * plotH; }
+
+    // Grid lines + labels
+    ctx.font = '10px "JetBrains Mono", monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    var gridStyle = getComputedStyle(document.documentElement);
+    var borderColor = gridStyle.getPropertyValue('--border').trim() || '#e0e0e0';
+    var mutedColor = gridStyle.getPropertyValue('--muted').trim() || '#999';
+    var step = range <= 20 ? 5 : 10;
+    for (var g = minV; g <= maxV; g += step) {
+      var gy = yPos(g);
+      ctx.strokeStyle = borderColor;
+      ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(W - padR, gy); ctx.stroke();
+      ctx.fillStyle = mutedColor;
+      ctx.fillText(g + '%', padL - 4, gy);
+    }
+
+    // Zero line
+    if (minV <= 0 && maxV >= 0) {
+      var zy = yPos(0);
+      ctx.strokeStyle = mutedColor;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.moveTo(padL, zy); ctx.lineTo(W - padR, zy); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // X-axis month labels
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = mutedColor;
+    var monthsSeen = {};
+    var monthNames = ['', 'JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+    for (var i = 0; i < data.length; i++) {
+      var mo = parseInt(data[i].date.slice(5, 7));
+      if (!monthsSeen[mo]) {
+        monthsSeen[mo] = true;
+        ctx.fillText(monthNames[mo], xPos(i), padT + plotH + 6);
+      }
+    }
+
+    // Line
+    ctx.strokeStyle = '#1a3a5c';
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (var i = 0; i < data.length; i++) {
+      var x = xPos(i), y = yPos(data[i].pct);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // End dot + label
+    var lastX = xPos(data.length - 1), lastY = yPos(data[data.length - 1].pct);
+    ctx.fillStyle = '#1a3a5c';
+    ctx.beginPath(); ctx.arc(lastX, lastY, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.font = 'bold 11px "JetBrains Mono", monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(data[data.length - 1].pct + '%', lastX - 6, lastY - 4);
+
+  } catch(e) { /* trend chart is optional — fail silently */ }
+})();
 </script>
 
 </body>
