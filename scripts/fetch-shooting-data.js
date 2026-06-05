@@ -1881,22 +1881,16 @@ async function fetchNYC() {
     asof = dateMatch[3] + '-' + String(parseInt(dateMatch[1])).padStart(2,'0') + '-' + String(parseInt(dateMatch[2])).padStart(2,'0');
   }
 
-  // Find "SHOOTING VIC" or "Shooting Vic" row — numbers after it: ytd, prior
-  const shootMatch = text.match(/Shooting\s*Vic[^\n]*?([\d,]+)\s+([\d,]+)\s+([\d,]+)\s+([\d,]+)/i);
-  if (!shootMatch) {
-    // Try alternate pattern
-    const idx = text.indexOf('SHOOTING VIC');
-    if (idx === -1) throw new Error('NYC: "Shooting Vic" not found. Tokens: ' + tokens.slice(0,60).join('|'));
-    const after = text.substring(idx).split(/\s+/).filter(t => /^\d/.test(t));
-    if (after.length < 4) throw new Error('NYC: not enough numbers after Shooting Vic');
-    const ytd = parseInt(after[2].replace(/,/g, ''));
-    const prior = parseInt(after[3].replace(/,/g, ''));
-    console.log('NYC: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
-    return { ytd, prior, asof };
-  }
-
-  const ytd = parseInt(shootMatch[3].replace(/,/g, ''));
-  const prior = parseInt(shootMatch[4].replace(/,/g, ''));
+  // Find "Shooting Vic" row — columns are: Week(2026,2025,%chg), 28Day(2026,2025,%chg), YTD(2026,2025,%chg), ...
+  // YTD values are at indices 6 and 7 among all numeric tokens after "Shooting Vic"
+  const idx = text.search(/Shooting\s*Vic/i);
+  if (idx === -1) throw new Error('NYC: "Shooting Vic" not found. Tokens: ' + tokens.slice(0,60).join('|'));
+  // Get text between Shooting Vic and the next crime category (Shooting Inc, Hate Crimes, Traffic, etc.)
+  const rowText = text.substring(idx).split(/(?:Shooting\s*Inc|Hate\s*Crime|Traffic)/i)[0];
+  const nums = rowText.match(/-?[\d,]+\.?\d*/g);
+  if (!nums || nums.length < 8) throw new Error('NYC: not enough numbers in Shooting Vic row. Found: ' + (nums || []).join(', '));
+  const ytd = parseInt(nums[6].replace(/,/g, ''));
+  const prior = parseInt(nums[7].replace(/,/g, ''));
   console.log('NYC: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
   return { ytd, prior, asof };
 }

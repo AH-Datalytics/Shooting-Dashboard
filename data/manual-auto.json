@@ -143,10 +143,10 @@
     "stale": true
   },
   "nyc": {
-    "ytd": 35,
-    "prior": 85,
+    "ytd": 289,
+    "prior": 311,
     "asof": "2026-05-31",
-    "fetchedAt": "2026-06-05T11:14:03.482Z",
+    "fetchedAt": "2026-06-05T16:46:05.551Z",
     "ok": true
   },
   "baltimore": {
