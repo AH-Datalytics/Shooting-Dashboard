@@ -1005,78 +1005,78 @@ function parseGIVECsv(csvText, cityLabel) {
   return { ytd, prior, asof: asofDate };
 }
 
+async function _fetchGIVESingleCity(browser, key, city) {
+  const page = await browser.newPage();
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  page.setDefaultTimeout(30000);
+
+  try {
+    const url = 'https://mypublicdashboard.ny.gov/t/OJRP_PUBLIC/views/GIVEShootingActivity/ShootingActivity?Jurisdiction=' + encodeURIComponent(city.jurisdiction);
+    console.log(city.label + ': loading...');
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(12000);
+
+    // Switch to Monthly Data
+    console.log(city.label + ': clicking Monthly Data...');
+    await page.locator('text=Monthly Data').first().click({ force: true });
+    await page.waitForTimeout(6000);
+
+    // Download → Crosstab → Monthly Total Overview → CSV
+    console.log(city.label + ': downloading CSV...');
+    await page.locator('[data-tb-test-id="viz-viewer-toolbar-button-download"]').first().click({ force: true });
+    await page.waitForTimeout(2000);
+
+    await page.locator('div').filter({ hasText: /^Crosstab$/ }).first().click({ force: true });
+    await page.waitForTimeout(2000);
+
+    try {
+      await page.locator('text=Monthly Total Overview').first().click({ force: true, timeout: 5000 });
+      await page.waitForTimeout(1000);
+    } catch(e) { /* may already be selected */ }
+
+    try {
+      await page.locator('text=CSV').first().click({ force: true, timeout: 5000 });
+      await page.waitForTimeout(500);
+    } catch(e) { /* may already be selected */ }
+
+    var [ download ] = await Promise.all([
+      page.waitForEvent('download', { timeout: 30000 }),
+      page.locator('button:has-text("Download")').last().click({ force: true })
+    ]);
+    var stream = await download.createReadStream();
+    var chunks = [];
+    await new Promise(function(res, rej) {
+      stream.on('data', function(c) { chunks.push(c); });
+      stream.on('end', res);
+      stream.on('error', rej);
+    });
+    var buf = Buffer.concat(chunks);
+    var csvText = buf.toString('utf16le').replace(/^\uFEFF/, '');
+    console.log(city.label + ': CSV downloaded, bytes:', buf.length);
+
+    var result = parseGIVECsv(csvText, city.label);
+    console.log(city.label + ': OK — ytd=' + result.ytd + ' prior=' + result.prior);
+    return result;
+  } catch(e) {
+    console.log(city.label + ': FAILED — ' + e.message);
+    return null;
+  } finally {
+    await page.close();
+  }
+}
+
 async function _fetchGIVEAllImpl() {
   const { chromium } = require('playwright');
   const browser = await chromium.launch({ headless: true });
-  const results = {};
 
-  // Process each city in a separate page using URL parameter filtering
+  // Process all 4 cities in parallel (separate pages, shared browser)
+  console.log('GIVE: launching all 4 cities in parallel...');
   const cityKeys = Object.keys(GIVE_CITIES);
-  for (var ci = 0; ci < cityKeys.length; ci++) {
-    var key = cityKeys[ci];
-    var city = GIVE_CITIES[key];
-    console.log('\nGIVE: === Processing ' + city.label + ' (' + city.jurisdiction + ') ===');
+  const promises = cityKeys.map(key => _fetchGIVESingleCity(browser, key, GIVE_CITIES[key]));
+  const resultArr = await Promise.all(promises);
 
-    var page = await browser.newPage();
-    await page.setViewportSize({ width: 1536, height: 1024 });
-    page.setDefaultTimeout(30000);
-
-    try {
-      // Load Shooting Activity with jurisdiction pre-filtered via URL parameter
-      var url = 'https://mypublicdashboard.ny.gov/t/OJRP_PUBLIC/views/GIVEShootingActivity/ShootingActivity?Jurisdiction=' + encodeURIComponent(city.jurisdiction);
-      console.log(city.label + ': loading ' + url);
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await page.waitForTimeout(15000);
-
-      // Switch to Monthly Data
-      console.log(city.label + ': clicking Monthly Data...');
-      await page.locator('text=Monthly Data').first().click({ force: true });
-      await page.waitForTimeout(8000);
-
-      // Download → Crosstab → Monthly Total Overview → CSV
-      console.log(city.label + ': downloading CSV...');
-      await page.locator('[data-tb-test-id="viz-viewer-toolbar-button-download"]').first().click({ force: true });
-      await page.waitForTimeout(2000);
-
-      await page.locator('div').filter({ hasText: /^Crosstab$/ }).first().click({ force: true });
-      await page.waitForTimeout(2000);
-
-      try {
-        await page.locator('text=Monthly Total Overview').first().click({ force: true, timeout: 5000 });
-        await page.waitForTimeout(1000);
-      } catch(e) { /* may already be selected */ }
-
-      try {
-        await page.locator('text=CSV').first().click({ force: true, timeout: 5000 });
-        await page.waitForTimeout(500);
-      } catch(e) { /* may already be selected */ }
-
-      var [ download ] = await Promise.all([
-        page.waitForEvent('download', { timeout: 30000 }),
-        page.locator('button:has-text("Download")').last().click({ force: true })
-      ]);
-      var stream = await download.createReadStream();
-      var chunks = [];
-      await new Promise(function(res, rej) {
-        stream.on('data', function(c) { chunks.push(c); });
-        stream.on('end', res);
-        stream.on('error', rej);
-      });
-      var buf = Buffer.concat(chunks);
-      var csvText = buf.toString('utf16le').replace(/^\uFEFF/, '');
-      console.log(city.label + ': CSV downloaded, bytes:', buf.length);
-
-      // Parse CSV
-      results[key] = parseGIVECsv(csvText, city.label);
-      console.log(city.label + ': OK — ytd=' + results[key].ytd + ' prior=' + results[key].prior);
-
-    } catch(e) {
-      console.log(city.label + ': FAILED — ' + e.message);
-      results[key] = null;
-    }
-
-    await page.close();
-  }
+  const results = {};
+  cityKeys.forEach((key, i) => { results[key] = resultArr[i]; });
 
   await browser.close();
   return results;
