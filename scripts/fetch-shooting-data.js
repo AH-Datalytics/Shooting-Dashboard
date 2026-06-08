@@ -124,6 +124,71 @@ async function callClaudeVision(base64Data, mediaType, prompt, { model = 'claude
 }
 
 
+// ─── Power BI Query API helper ───────────────────────────────────────────────
+
+const zlib = require('zlib');
+
+function pbiQuery(cluster, reportKey, modelId, datasetId, query) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      version: '1.0.0',
+      queries: [{
+        Query: { Commands: [{ SemanticQueryDataShapeCommand: { Query: query } }] },
+        QueryId: '',
+        ApplicationContext: { DatasetId: datasetId, Sources: [] }
+      }],
+      cancelQueries: [],
+      modelId
+    });
+
+    const req = https.request({
+      hostname: cluster,
+      path: '/public/reports/querydata?synchronous=true',
+      method: 'POST',
+      headers: {
+        'X-PowerBI-ResourceKey': reportKey,
+        'Content-Type': 'application/json',
+        'Accept-Encoding': 'gzip'
+      }
+    }, res => {
+      let stream = res;
+      if (res.headers['content-encoding'] === 'gzip') stream = res.pipe(zlib.createGunzip());
+      const chunks = [];
+      stream.on('data', c => chunks.push(c));
+      stream.on('end', () => {
+        try {
+          const j = JSON.parse(Buffer.concat(chunks).toString());
+          if (j.results && j.results[0].result.data.dsr) {
+            resolve(j.results[0].result.data.dsr);
+          } else {
+            const errMsg = j.DataShapes?.[0]?.['odata.error']?.message?.value || JSON.stringify(j).substring(0, 200);
+            reject(new Error('PBI query error: ' + errMsg));
+          }
+        } catch (e) {
+          reject(new Error('PBI parse error: ' + e.message));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('PBI timeout')); });
+    req.write(body);
+    req.end();
+  });
+}
+
+// Extract {year: count} map from PBI DSR response (DM1 rows with C: [year, count])
+function parsePbiYearCounts(dsr) {
+  const result = {};
+  const dm1 = dsr.DS[0].PH[1]?.DM1 || dsr.DS[0].PH[0]?.DM1;
+  if (!dm1) return result;
+  for (const row of dm1) {
+    if (!row.C || row.C.length < 2) continue;
+    result[row.C[0]] = row.C[1];
+  }
+  return result;
+}
+
+
 // ─── Power BI wait helper ─────────────────────────────────────────────────────
 
 async function waitForPowerBI(page, fallbackMs = 10000) {
@@ -605,209 +670,33 @@ async function fetchMilwaukee() {
 
 
 
-// ─── Memphis (Power BI) ───────────────────────────────────────────────────────
-
-
+// ─── Memphis (Power BI API) ───────────────────────────────────────────────────
 
 async function fetchMemphis() {
-
-  const { chromium } = require('playwright');
-
-  const browser = await chromium.launch({ headless: true });
-
-  const page    = await browser.newPage();
-
-  page.setDefaultTimeout(30000);
-
-
-
-  console.log('Memphis: loading Power BI dashboard...');
-
-  await page.goto(
-
-    'https://app.powerbigov.us/view?r=eyJrIjoiZTYyYmQ0Y2QtZTM0Ni00ZTFiLThkMjMtOTYxYWZiOWUyZDU4IiwidCI6IjQxNjQ3NTYxLTY1MzctNDQyMy05NmE5LTg1OWU4OWY4OTE5ZiJ9',
-
-    { waitUntil: 'domcontentloaded', timeout: 60000 }
-
-  );
-
-
-
-  // Wait for Power BI content to render
-
-  try {
-
-    await page.waitForFunction(
-
-      () => document.body.innerText.includes('Crime Overview'),
-
-      { timeout: 30000 }
-
-    );
-
-  } catch(e) {
-
-    console.log('Memphis: Crime Overview not found after 30s, proceeding anyway...');
-
-  }
-
-  await page.waitForTimeout(5000);
-
-
-
-  // Grab as-of date from page 1: "Data through 2/21/2026" bottom right
-
-  const page1Text = await page.evaluate(() => document.body.innerText);
-
-  console.log('Memphis page1 sample:', page1Text.substring(0, 400));
-
-  let asof = null;
-
-  const dateMatch = page1Text.match(/Data through\s+(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
-
-  if (dateMatch) {
-
-    asof = dateMatch[3] + '-' + dateMatch[1].padStart(2,'0') + '-' + dateMatch[2].padStart(2,'0');
-
-    console.log('Memphis as-of:', asof);
-
-  }
-
-
-
-  // Click Crime Summary tab
-
-  console.log('Memphis: clicking Crime Summary tab...');
-
-  try {
-
-    await page.getByText('Crime Summary').first().click();
-
-  } catch(e) {
-
-    await page.locator('text=Crime Summary').first().click();
-
-  }
-
-  await page.waitForTimeout(4000);
-
-
-
-  // Click Non-Fatal Shooting button
-
-  console.log('Memphis: clicking Non-Fatal Shooting...');
-
-  await page.locator('text=Non-Fatal').first().click();
-
-  await page.waitForTimeout(6000); // extra wait for chart to render
-
-
-
-  // Read chart text + take screenshot for vision fallback
-
-  const chartText = await page.evaluate(() => document.body.innerText);
-
-  console.log('Memphis chart sample:', chartText.substring(0, 800));
-
-  const screenshotBuf = await page.screenshot({ fullPage: false });
-
-  console.log('Memphis: screenshot taken, size:', screenshotBuf.length, 'bytes');
-
-
-
-  await browser.close();
-
-
-
+  console.log('Memphis: querying Power BI API...');
   const yr = new Date().getFullYear();
-
-
-
-  let ytd = null, prior = null;
-
-
-
-  var ytdMatch = chartText.match(new RegExp(yr + ':\\s*(\\d+)(?=\\s|\\(|$)'));
-
-  var priorMatch = chartText.match(new RegExp((yr-1) + ':\\s*(\\d+)(?=\\s|\\(|$)'));
-
-  if (ytdMatch) {
-
-    ytd = parseInt(ytdMatch[1]);
-
-    console.log('Memphis: found YTD from title: ' + yr + ': ' + ytd);
-
-  }
-
-  if (priorMatch) {
-
-    prior = parseInt(priorMatch[1]);
-
-    console.log('Memphis: found prior from title: ' + (yr-1) + ': ' + prior);
-
-  }
-
-
-
-  if (ytd !== null && ytd > 999) {
-
-    console.log('Memphis: implausible ytd=' + ytd + ', resetting to null for vision fallback');
-
-    ytd = null;
-
-  }
-
-  // Plausibility: if YTD=0 past January, the dashboard didn't render properly
-  if (ytd === 0 && new Date().getMonth() > 0) {
-
-    console.log('Memphis: ytd=0 past January is implausible, resetting for vision fallback');
-
-    ytd = null;
-
-  }
-
-
-
-  if (ytd === null) {
-
-    console.log('Memphis: text parsing failed, using vision API...');
-
-    const base64Image = screenshotBuf.toString('base64');
-
-    const visionText = await callClaudeVision(base64Image, 'image/png',
-      'This is a Memphis Non-Fatal Shooting Incidents bar chart. The chart title area shows "YEAR: COUNT" for the current and prior year. What are the two values? Reply ONLY in this format: YTD=N PRIOR=N (where YTD is the current/latest year count and PRIOR is the previous year count)',
-      { maxTokens: 64 });
-
-    console.log('Memphis vision response:', visionText);
-
-
-
-    var vYtd = visionText.match(/YTD=(\d+)/);
-
-    var vPrior = visionText.match(/PRIOR=(\d+)/);
-
-    if (vYtd) ytd = parseInt(vYtd[1]);
-
-    if (vPrior) prior = parseInt(vPrior[1]);
-
-  }
-
-  // Guard against year values being returned as counts (e.g. 2025, 2026)
-  if (ytd !== null && (ytd > 999 || ytd === yr || ytd === yr - 1)) {
-    console.log('Memphis: implausible ytd=' + ytd + ' after all attempts, rejecting');
-    throw new Error('Memphis: ytd=' + ytd + ' is implausible (likely a year, not a count)');
-  }
-
-  console.log('Memphis parsed: ytd=' + ytd + ' prior=' + prior);
-
-
-
-  if (ytd === null || (ytd === 0 && new Date().getMonth() > 0)) throw new Error('Could not find ' + yr + ' Non-Fatal Shooting value (ytd=' + ytd + '). Chart text sample: ' + chartText.substring(0, 800));
-
-
-
-  return { ytd, prior, asof };
-
+  const dsr = await pbiQuery(
+    'wabi-us-gov-virginia-api.analysis.usgovcloudapi.net',
+    'e62bd4cd-e346-4e1b-8d23-961afb9e2d58',
+    1354500, 'edf40fb7-0f73-4122-a76f-fb7561bb2998',
+    {
+      Version: 2,
+      From: [
+        { Name: 'c', Entity: 'Crime Measure Report Table', Type: 0 },
+        { Name: 'd', Entity: 'Offense Calendar', Type: 0 }
+      ],
+      Select: [
+        { Column: { Expression: { SourceRef: { Source: 'd' } }, Property: 'Year' }, Name: 'Year' },
+        { Measure: { Expression: { SourceRef: { Source: 'c' } }, Property: 'Inc Shoot YTD' }, Name: 'ShootYTD' }
+      ]
+    }
+  );
+  const counts = parsePbiYearCounts(dsr);
+  const ytd = counts[yr];
+  const prior = counts[yr - 1];
+  if (ytd == null) throw new Error('Memphis: no data for ' + yr + '. Years found: ' + Object.keys(counts).join(', '));
+  console.log('Memphis: ytd=' + ytd + ' prior=' + prior);
+  return { ytd, prior, asof: null };
 }
 
 
@@ -1222,215 +1111,40 @@ async function fetchSuffolkCounty() {
 
 
 async function fetchMiamiDade() {
-
-  const { chromium } = require('playwright');
-
-  const browser = await chromium.launch({ headless: true });
-
-  const page    = await browser.newPage();
-
-  await page.setViewportSize({ width: 1536, height: 768 });
-
-  page.setDefaultTimeout(30000);
-
-
-
-  const url = 'https://www.miamidade.gov/global/police/crime-stats.page';
-
-  console.log('MiamiDade: loading wrapper page...');
-
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-  // Wait for Power BI iframe to appear instead of fixed 10s
-  try {
-    await page.waitForSelector('iframe[src*="powerbi"]', { timeout: 15000 });
-    await page.waitForTimeout(2000);
-  } catch {
-    await page.waitForTimeout(8000);
-  }
-
-  const iframeSrc = await page.evaluate(() => {
-
-    const frames = Array.from(document.querySelectorAll('iframe'));
-
-    const pbi = frames.find(f => f.src && f.src.includes('powerbi'));
-
-    return pbi ? pbi.src : null;
-
-  });
-
-  console.log('MiamiDade iframe src:', iframeSrc);
-
-
-
-  if (!iframeSrc) {
-
-    const src = await page.content();
-
-    console.log('MiamiDade page source snippet:', src.substring(0, 2000));
-
-    await browser.close();
-
-    throw new Error('Could not find Power BI iframe on Miami-Dade page');
-
-  }
-
-
-
-  console.log('MiamiDade: loading Power BI embed directly...');
-
-  await page.goto(iframeSrc, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-  await waitForPowerBI(page, 15000);
-
-
-
-  const page1Text = await page.evaluate(() => document.body.innerText);
-
-  console.log('MiamiDade PBI page1 sample:', page1Text.substring(0, 600));
-
-
-
-  const dateMatch = page1Text.match(/Last update dat[ae][:\s]+(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
-
-  let asof = null;
-
-  if (dateMatch) {
-
-    asof = `${dateMatch[3]}-${dateMatch[1].padStart(2,'0')}-${dateMatch[2].padStart(2,'0')}`;
-
-  }
-
-  console.log('MiamiDade asof:', asof);
-
-
-
-  console.log('MiamiDade: navigating to page 3...');
-
-  for (let i = 0; i < 2; i++) {
-
-    try {
-
-      await page.locator('.pbi-glyph-chevronrightmedium').first().click({ force: true, timeout: 5000 });
-
-      await page.waitForTimeout(5000);
-
-      console.log(`MiamiDade: clicked next (${i+1}/2)`);
-
-    } catch(e) {
-
-      try {
-
-        await page.locator('[aria-label="Next page"]').first().click({ force: true, timeout: 3000 });
-
-        await page.waitForTimeout(5000);
-
-        console.log(`MiamiDade: clicked Next page button (${i+1}/2)`);
-
-      } catch(e2) {
-
-        console.log(`MiamiDade: nav click ${i+1} failed:`, e.message);
-
-      }
-
-    }
-
-  }
-
-
-
-  const page3Text = await page.evaluate(() => document.body.innerText);
-
-  console.log('MiamiDade page3 sample:', page3Text.substring(0, 1000));
-
-  await browser.close();
-
-
-
-  if (!asof) {
-
-    const dateMatch3 = page3Text.match(/Last update dat[ae][:\s]+(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
-
-    if (dateMatch3) {
-
-      asof = `${dateMatch3[3]}-${dateMatch3[1].padStart(2,'0')}-${dateMatch3[2].padStart(2,'0')}`;
-
-      console.log('MiamiDade asof from page3:', asof);
-
-    }
-
-  }
-
-
-
+  console.log('MiamiDade: querying Power BI API...');
   const yr = new Date().getFullYear();
-
-  let ytd = null, prior = null;
-
-
-
-  const shootMatch = page3Text.match(/SHOOTINGS[\s\S]{0,300}/i);
-
-  if (shootMatch) {
-
-    const nums = [...shootMatch[0].matchAll(/(\d+)\s+[-\d.]+%/g)];
-
-    console.log('MiamiDade shootings nums:', nums.map(m => m[1]).join(', '));
-
-    if (nums.length >= 1) ytd   = parseInt(nums[0][1]);
-
-    if (nums.length >= 2) prior = parseInt(nums[1][1]);
-
-  }
-
-
-
-  if (ytd === null) {
-
-    const lines = page3Text.split('\n').map(l => l.trim()).filter(Boolean);
-
-    for (let i = 0; i < lines.length; i++) {
-
-      if (/^SHOOTINGS$/i.test(lines[i])) {
-
-        const vals = [];
-
-        for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
-
-          if (/^\d+$/.test(lines[j])) vals.push(parseInt(lines[j]));
-
-          if (vals.length === 2) break;
-
+  const dsr = await pbiQuery(
+    'wabi-us-gov-virginia-api.analysis.usgovcloudapi.net',
+    '41dbd6d3-ff55-499e-a800-48116bebaa28',
+    1568733, '18dcb4b6-5a32-4488-abff-b2eb04d60f5e',
+    {
+      Version: 2,
+      From: [
+        { Name: 'n', Entity: 'NIBRS_D', Type: 0 },
+        { Name: 'c', Entity: 'CALENDAR_TABLE', Type: 0 },
+        { Name: 'm', Entity: 'Measure Table', Type: 0 }
+      ],
+      Select: [
+        { Column: { Expression: { SourceRef: { Source: 'c' } }, Property: 'YEAR' }, Name: 'Year' },
+        { Measure: { Expression: { SourceRef: { Source: 'm' } }, Property: 'YTD_TOTALCRIME' }, Name: 'YTD' }
+      ],
+      Where: [{
+        Condition: {
+          In: {
+            Expressions: [{ Column: { Expression: { SourceRef: { Source: 'n' } }, Property: 'PUBLIC DEFINITION' } }],
+            Values: [[{ Literal: { Value: "'SHOOTINGS'" } }]]
+          }
         }
-
-        console.log('MiamiDade line-scan shootings:', vals);
-
-        if (vals.length >= 1) ytd   = vals[0];
-
-        if (vals.length >= 2) prior = vals[1];
-
-        break;
-
-      }
-
+      }]
     }
-
-  }
-
-
-
-  console.log(`MiamiDade parsed: ytd=${ytd} prior=${prior}`);
-
-  if (ytd === null) throw new Error('Could not parse MiamiDade shootings from page text');
-
-
-
-  return { ytd, prior, asof };
-
+  );
+  const counts = parsePbiYearCounts(dsr);
+  const ytd = counts[yr];
+  const prior = counts[yr - 1];
+  if (ytd == null) throw new Error('MiamiDade: no data for ' + yr + '. Years: ' + Object.keys(counts).join(', '));
+  console.log('MiamiDade: ytd=' + ytd + ' prior=' + prior);
+  return { ytd, prior, asof: null };
 }
-
-
-
 
 
 // ─── Las Vegas (LVMPD Weekly Crime Report PDF) ──────────────────────────────
@@ -2455,198 +2169,44 @@ async function fetchPortland() {
 
 
 
-// ─── Denver (Power BI - Firearm Homicides + Non-Fatal Shootings) ─────────────
-
-
+// ─── Denver (Power BI API - Firearm Homicides + Non-Fatal Shootings) ────────
 
 async function fetchDenver() {
-
-  const { chromium } = require('playwright');
-
-  const browser = await chromium.launch({ headless: true });
-
-  const page    = await browser.newPage();
-
-  await page.setViewportSize({ width: 1536, height: 900 });
-
-  page.setDefaultTimeout(30000);
-
-
-
-  const url = 'https://app.powerbigov.us/view?r=eyJrIjoiOWMwZjg0MGYtODI0ZC00ZGVjLThmNjEtMzExZDI3OGUzYzQyIiwidCI6IjM5Yzg3YWIzLTY2MTItNDJjMC05NjIwLWE2OTZkMTJkZjgwMyJ9';
-
-  console.log('Denver: loading Power BI embed directly...');
-
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-  await waitForPowerBI(page, 10000);
-
-  const page1Text = await page.evaluate(() => document.body.innerText);
-
-  console.log('Denver page1 sample:', page1Text.substring(0, 600));
-
-
-
-  console.log('Denver: navigating to page 3...');
-
-  for (let i = 0; i < 2; i++) {
-
-    try {
-
-      await page.locator('.pbi-glyph-chevronrightmedium').first().click({ force: true, timeout: 5000 });
-
-      await page.waitForTimeout(5000);
-
-      console.log(`Denver: clicked next (${i+1}/2)`);
-
-    } catch(e) {
-
-      try {
-
-        await page.locator('[aria-label="Next page"]').first().click({ force: true, timeout: 3000 });
-
-        await page.waitForTimeout(5000);
-
-        console.log(`Denver: clicked Next page button (${i+1}/2)`);
-
-      } catch(e2) {
-
-        console.log(`Denver: nav click ${i+1} failed:`, e.message);
-
-      }
-
-    }
-
-  }
-
-
-
-  await page.waitForTimeout(5000);
-
-  const page3Text = await page.evaluate(() => document.body.innerText);
-
-  console.log('Denver page3 sample:', page3Text.substring(0, 1000));
-
-
-
-  let asof = null;
-
-  const dateMatch = page3Text.match(/Last Updated[:\s]*(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
-
-  if (dateMatch) {
-
-    asof = `${dateMatch[3]}-${dateMatch[1].padStart(2,'0')}-${dateMatch[2].padStart(2,'0')}`;
-
-  }
-
-  console.log('Denver asof:', asof);
-
-
-
+  console.log('Denver: querying Power BI API (YTD measures)...');
   const yr = new Date().getFullYear();
 
-  let ytd = null, prior = null;
-
-
-
-  const ytdMatch = page3Text.match(new RegExp('Firearm Homicides \\+ Non-Fatal Shooting Victims ' + yr + ' YTD[\\s\\n]+(\\d+)', 'i'));
-
-  const priorMatch = page3Text.match(new RegExp('Firearm Homicides \\+ Non-Fatal Shooting Victims ' + (yr-1) + ' YTD[\\s\\n]+(\\d+)', 'i'));
-
-
-
-  if (ytdMatch) ytd = parseInt(ytdMatch[1]);
-
-  if (priorMatch) prior = parseInt(priorMatch[1]);
-
-  console.log('Denver text parse: ytd=' + ytd + ' prior=' + prior);
-
-
-
-  if (ytd === null) {
-
-    const lines = page3Text.split('\n').map(l => l.trim()).filter(Boolean);
-
-    for (let i = 0; i < lines.length; i++) {
-
-      if (/Firearm Homicides.*Non-Fatal.*\d{4}\s*YTD/i.test(lines[i])) {
-
-        for (let j = Math.max(0, i-2); j < Math.min(lines.length, i+3); j++) {
-
-          if (/^\d+$/.test(lines[j])) {
-
-            if (lines[i].includes(String(yr)) && ytd === null) ytd = parseInt(lines[j]);
-
-            else if (lines[i].includes(String(yr-1)) && prior === null) prior = parseInt(lines[j]);
-
-          }
-
-        }
-
-      }
-
+  // Denver has explicit YTD measures that compare same-period across years
+  const dsr = await pbiQuery(
+    'wabi-us-gov-iowa-api.analysis.usgovcloudapi.net',
+    '9c0f840f-824d-4dec-8f61-311d278e3c42',
+    713694, 'f869e8c9-a501-45a6-a4c2-d6eae79af2ed',
+    {
+      Version: 2,
+      From: [
+        { Name: 's', Entity: '2021-2026 Shooting', Type: 0 },
+        { Name: 'h', Entity: '2021-2026 Homicides', Type: 0 }
+      ],
+      Select: [
+        { Measure: { Expression: { SourceRef: { Source: 's' } }, Property: yr + 'YTD_NFS' }, Name: 'NFS_YTD' },
+        { Measure: { Expression: { SourceRef: { Source: 's' } }, Property: (yr-1) + 'YTD_NFS' }, Name: 'NFS_Prior' },
+        { Measure: { Expression: { SourceRef: { Source: 'h' } }, Property: yr + 'YTD_Hom' }, Name: 'Hom_YTD' },
+        { Measure: { Expression: { SourceRef: { Source: 'h' } }, Property: (yr-1) + 'YTD_Hom' }, Name: 'Hom_Prior' }
+      ]
     }
+  );
 
-    console.log('Denver line-scan: ytd=' + ytd + ' prior=' + prior);
+  // Scalar response: DM0[0].C = [nfsYtd, nfsPrior, homYtd, homPrior]
+  const vals = dsr.DS[0].PH[0].DM0[0].C;
+  if (!vals || vals.length < 4) throw new Error('Denver: unexpected PBI response');
 
-  }
+  const nfsYtd = vals[0] || 0, nfsPrior = vals[1] || 0;
+  const homYtd = vals[2] || 0, homPrior = vals[3] || 0;
+  const ytd = nfsYtd + homYtd;
+  const prior = nfsPrior + homPrior;
 
-
-
-  if (ytd === null || prior === null) {
-
-    console.log('Denver: falling back to vision API...');
-
-    const screenshotBuf = await page.screenshot({ fullPage: false });
-
-    await browser.close();
-
-    const base64Image = screenshotBuf.toString('base64');
-
-    const promptText = [
-      'This is a Denver Police Department Power BI dashboard showing "Reported Firearm Homicides and Non-Fatal Shootings in Denver".',
-      'It shows two main numbers: the current year YTD count and the previous year YTD count for "Firearm Homicides + Non-Fatal Shooting Victims".',
-      'It also shows "Last Updated" date in the top right.',
-      'Extract: YTD (current year number), PRIOR (previous year number), and ASOF (Last Updated date in YYYY-MM-DD format).',
-      'Reply ONLY in this exact format: YTD=N PRIOR=N ASOF=YYYY-MM-DD'
-    ].join(' ');
-
-    const visionText = await callClaudeVision(base64Image, 'image/png', promptText, { maxTokens: 128 });
-
-    console.log('Denver vision response:', visionText);
-
-
-
-    const ytdV = visionText.match(/YTD=(\d+)/);
-
-    const priorV = visionText.match(/PRIOR=(\d+)/);
-
-    const asofV = visionText.match(/ASOF=(\d{4}-\d{2}-\d{2})/);
-
-    if (ytdV) ytd = parseInt(ytdV[1]);
-
-    if (priorV) prior = parseInt(priorV[1]);
-
-    if (asofV && !asof) asof = asofV[1];
-
-  } else {
-
-    await browser.close();
-
-  }
-
-
-
-  console.log('Denver final: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
-
-  if (ytd === null || prior === null) throw new Error('Denver: could not extract data');
-
-  return { ytd, prior, asof };
-
+  console.log('Denver: NFS=' + nfsYtd + '/' + nfsPrior + ' Hom=' + homYtd + '/' + homPrior + ' ytd=' + ytd + ' prior=' + prior);
+  return { ytd, prior, asof: null };
 }
-
-
-
 
 
 // ─── Portsmouth (Power BI - GSW Victims) ─────────────────────────────────────
@@ -2742,7 +2302,7 @@ async function fetchPortsmouth() {
 
 
   let visionText = await callClaudeVision(base64Image, 'image/png', promptText,
-    { model: 'claude-sonnet-4-5-20250929', maxTokens: 128 });
+    { maxTokens: 128 });
 
   console.log('Portsmouth vision response:', visionText);
 
@@ -2753,7 +2313,7 @@ async function fetchPortsmouth() {
     await new Promise(r => setTimeout(r, 3000));
 
     visionText = await callClaudeVision(base64Image, 'image/png', promptText,
-      { model: 'claude-sonnet-4-5-20250929', maxTokens: 128 });
+      { maxTokens: 128 });
 
     console.log('Portsmouth vision retry ' + retry + ' response:', visionText);
 
