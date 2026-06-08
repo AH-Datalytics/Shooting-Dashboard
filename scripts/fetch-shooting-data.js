@@ -792,7 +792,11 @@ async function fetchMemphis() {
 
   }
 
-
+  // Guard against year values being returned as counts (e.g. 2025, 2026)
+  if (ytd !== null && (ytd > 999 || ytd === yr || ytd === yr - 1)) {
+    console.log('Memphis: implausible ytd=' + ytd + ' after all attempts, rejecting');
+    throw new Error('Memphis: ytd=' + ytd + ' is implausible (likely a year, not a count)');
+  }
 
   console.log('Memphis parsed: ytd=' + ytd + ' prior=' + prior);
 
