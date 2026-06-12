@@ -436,13 +436,22 @@ var CURRENT_YEAR = new Date().getFullYear();
 
   // ─── AUTO-FETCHED DATA (from GitHub Action) ───────────────────────────────
   var _autoData = null;
+  var _autoDataPromise = null;
   async function loadAutoData() {
     if (_autoData) return _autoData;
-    try {
-      var r = await fetch('data/manual-auto.json', { signal: AbortSignal.timeout(5000) });
-      if (r.ok) _autoData = await r.json();
-    } catch(e) { _autoData = {}; }
-    return _autoData || {};
+    if (_autoDataPromise) return _autoDataPromise;
+    _autoDataPromise = (async function() {
+      for (var attempt = 0; attempt < 3; attempt++) {
+        try {
+          var url = 'data/manual-auto.json?t=' + Date.now();
+          var r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+          if (r.ok) { _autoData = await r.json(); return _autoData; }
+        } catch(e) { /* retry */ }
+      }
+      _autoData = {};
+      return _autoData;
+    })();
+    return _autoDataPromise;
   }
 
   // ─── Shared auto-data helpers ─────────────────────────────────────────────
@@ -861,6 +870,8 @@ async function fetchAll() {
 
   var done = 0;
   setProgress(0.02);
+
+  await loadAutoData();
 
   var promises = CITIES.map(async function(city) {
     // Manual cities: load from storage directly

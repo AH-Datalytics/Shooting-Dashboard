@@ -695,8 +695,10 @@ async function fetchMemphis() {
   const ytd = counts[yr];
   const prior = counts[yr - 1];
   if (ytd == null) throw new Error('Memphis: no data for ' + yr + '. Years found: ' + Object.keys(counts).join(', '));
-  console.log('Memphis: ytd=' + ytd + ' prior=' + prior);
-  return { ytd, prior, asof: null };
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  const asof = yesterday.getFullYear() + '-' + String(yesterday.getMonth()+1).padStart(2,'0') + '-' + String(yesterday.getDate()).padStart(2,'0');
+  console.log('Memphis: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
+  return { ytd, prior, asof };
 }
 
 
@@ -1142,8 +1144,10 @@ async function fetchMiamiDade() {
   const ytd = counts[yr];
   const prior = counts[yr - 1];
   if (ytd == null) throw new Error('MiamiDade: no data for ' + yr + '. Years: ' + Object.keys(counts).join(', '));
-  console.log('MiamiDade: ytd=' + ytd + ' prior=' + prior);
-  return { ytd, prior, asof: null };
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  const asof = yesterday.getFullYear() + '-' + String(yesterday.getMonth()+1).padStart(2,'0') + '-' + String(yesterday.getDate()).padStart(2,'0');
+  console.log('MiamiDade: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
+  return { ytd, prior, asof };
 }
 
 
@@ -2204,8 +2208,10 @@ async function fetchDenver() {
   const ytd = nfsYtd + homYtd;
   const prior = nfsPrior + homPrior;
 
-  console.log('Denver: NFS=' + nfsYtd + '/' + nfsPrior + ' Hom=' + homYtd + '/' + homPrior + ' ytd=' + ytd + ' prior=' + prior);
-  return { ytd, prior, asof: null };
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  const asof = yesterday.getFullYear() + '-' + String(yesterday.getMonth()+1).padStart(2,'0') + '-' + String(yesterday.getDate()).padStart(2,'0');
+  console.log('Denver: NFS=' + nfsYtd + '/' + nfsPrior + ' Hom=' + homYtd + '/' + homPrior + ' ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
+  return { ytd, prior, asof };
 }
 
 
