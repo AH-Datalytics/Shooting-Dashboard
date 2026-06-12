@@ -1984,6 +1984,9 @@ async function main() {
 
     if (value.ok) {
 
+      if (!value.asof && existing[key] && existing[key].asof) {
+        value.asof = existing[key].asof;
+      }
       results[key] = value;
 
     } else if (existing[key] && existing[key].ok) {
