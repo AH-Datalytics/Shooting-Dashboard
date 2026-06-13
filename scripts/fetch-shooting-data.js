@@ -188,6 +188,41 @@ function parsePbiYearCounts(dsr) {
   return result;
 }
 
+function pbiFirstScalar(dsr) {
+  const row = dsr?.DS?.[0]?.PH?.[0]?.DM0?.[0];
+  if (!row) return null;
+  for (let i = 0; i < 10; i++) {
+    if (row['M' + i] != null) return row['M' + i];
+    if (row['G' + i] != null) return row['G' + i];
+    if (row['A' + i] != null) return row['A' + i];
+  }
+  if (Array.isArray(row.C) && row.C.length) return row.C[0];
+  return null;
+}
+
+function formatPbiDate(value) {
+  if (value == null) return null;
+  if (typeof value === 'number') {
+    if (value > 1000000000000) return new Date(value).toISOString().slice(0, 10);
+    return null;
+  }
+  if (typeof value === 'string') {
+    let m = value.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return m[1] + '-' + m[2] + '-' + m[3];
+    m = value.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (m) return m[3] + '-' + m[1].padStart(2, '0') + '-' + m[2].padStart(2, '0');
+  }
+  return null;
+}
+
+async function pbiAsOf(cluster, reportKey, modelId, datasetId, query, label) {
+  const dsr = await pbiQuery(cluster, reportKey, modelId, datasetId, query);
+  const value = pbiFirstScalar(dsr);
+  const asof = formatPbiDate(value);
+  if (!asof) throw new Error(label + ': no asof date in PBI response');
+  return asof;
+}
+
 
 // ─── Power BI wait helper ─────────────────────────────────────────────────────
 
@@ -695,8 +730,19 @@ async function fetchMemphis() {
   const ytd = counts[yr];
   const prior = counts[yr - 1];
   if (ytd == null) throw new Error('Memphis: no data for ' + yr + '. Years found: ' + Object.keys(counts).join(', '));
-  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
-  const asof = yesterday.getFullYear() + '-' + String(yesterday.getMonth()+1).padStart(2,'0') + '-' + String(yesterday.getDate()).padStart(2,'0');
+  const asof = await pbiAsOf(
+    'wabi-us-gov-virginia-api.analysis.usgovcloudapi.net',
+    'e62bd4cd-e346-4e1b-8d23-961afb9e2d58',
+    1354500, 'edf40fb7-0f73-4122-a76f-fb7561bb2998',
+    {
+      Version: 2,
+      From: [{ Name: 'c', Entity: 'Crime Measure Report Table', Type: 0 }],
+      Select: [
+        { Measure: { Expression: { SourceRef: { Source: 'c' } }, Property: 'Yesterday' }, Name: 'Yesterday' }
+      ]
+    },
+    'Memphis'
+  );
   console.log('Memphis: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
   return { ytd, prior, asof };
 }
@@ -1144,8 +1190,19 @@ async function fetchMiamiDade() {
   const ytd = counts[yr];
   const prior = counts[yr - 1];
   if (ytd == null) throw new Error('MiamiDade: no data for ' + yr + '. Years: ' + Object.keys(counts).join(', '));
-  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
-  const asof = yesterday.getFullYear() + '-' + String(yesterday.getMonth()+1).padStart(2,'0') + '-' + String(yesterday.getDate()).padStart(2,'0');
+  const asof = await pbiAsOf(
+    'wabi-us-gov-virginia-api.analysis.usgovcloudapi.net',
+    '41dbd6d3-ff55-499e-a800-48116bebaa28',
+    1568733, '18dcb4b6-5a32-4488-abff-b2eb04d60f5e',
+    {
+      Version: 2,
+      From: [{ Name: 'x', Entity: 'CDWT_CRIME', Type: 0 }],
+      Select: [
+        { Aggregation: { Expression: { Column: { Expression: { SourceRef: { Source: 'x' } }, Property: 'INCIDENT_FROM_DATE' } }, Function: 4 }, Name: 'MaxIncidentDate' }
+      ]
+    },
+    'MiamiDade'
+  );
   console.log('MiamiDade: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
   return { ytd, prior, asof };
 }
@@ -2044,7 +2101,26 @@ async function main() {
 
 
 
-main().catch(e => { console.error(e); process.exit(1); });
+async function runSelectedCity() {
+  const cityArgIndex = process.argv.indexOf('--city');
+  if (cityArgIndex < 0) return false;
+
+  const city = String(process.argv[cityArgIndex + 1] || '').toLowerCase().replace(/[^a-z]/g, '');
+  const fetchers = {
+    memphis: fetchMemphis,
+    miamidade: fetchMiamiDade,
+    denver: fetchDenver
+  };
+  if (!fetchers[city]) throw new Error('Unknown --city value: ' + (process.argv[cityArgIndex + 1] || ''));
+
+  const result = await fetchers[city]();
+  console.log(JSON.stringify({ [city]: { ...result, ok: true } }, null, 2));
+  return true;
+}
+
+runSelectedCity()
+  .then(handled => { if (!handled) return main(); })
+  .catch(e => { console.error(e); process.exit(1); });
 
 
 
@@ -2211,8 +2287,19 @@ async function fetchDenver() {
   const ytd = nfsYtd + homYtd;
   const prior = nfsPrior + homPrior;
 
-  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
-  const asof = yesterday.getFullYear() + '-' + String(yesterday.getMonth()+1).padStart(2,'0') + '-' + String(yesterday.getDate()).padStart(2,'0');
+  const asof = await pbiAsOf(
+    'wabi-us-gov-iowa-api.analysis.usgovcloudapi.net',
+    '9c0f840f-824d-4dec-8f61-311d278e3c42',
+    713694, 'f869e8c9-a501-45a6-a4c2-d6eae79af2ed',
+    {
+      Version: 2,
+      From: [{ Name: 's', Entity: '2021-2026 Shooting', Type: 0 }],
+      Select: [
+        { Aggregation: { Expression: { Column: { Expression: { SourceRef: { Source: 's' } }, Property: 'OCC Date' } }, Function: 4 }, Name: 'MaxOccDate' }
+      ]
+    },
+    'Denver'
+  );
   console.log('Denver: NFS=' + nfsYtd + '/' + nfsPrior + ' Hom=' + homYtd + '/' + homPrior + ' ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
   return { ytd, prior, asof };
 }
