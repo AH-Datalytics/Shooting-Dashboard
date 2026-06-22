@@ -2552,12 +2552,18 @@ async function fetchPortsmouth() {
   console.log('Portsmouth: loading Power BI dashboard...');
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await waitForPowerBI(page, 15000);
+  await page.waitForFunction(
+    () => /Last\s+(?:Database\s+)?Update[d]?[\s\S]*\d{1,2}\/\d{1,2}\/\d{4}/i.test(document.body.innerText),
+    null,
+    { timeout: 20000 }
+  ).catch(() => {});
 
   const bodyText = await page.evaluate(() => document.body.innerText);
   console.log('Portsmouth page sample:', bodyText.substring(0, 800));
 
   let asof = null;
-  const dateMatch = bodyText.match(/(?:Last\s+(?:Database\s+)?Update[d]?|Updated)[:\s]*(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
+  const dateMatch = bodyText.match(/(?:Last\s+(?:Database\s+)?Update[d]?|Updated)[\s\S]{0,80}?(\d{1,2})\/(\d{1,2})\/(\d{4})/i) ||
+    bodyText.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   if (dateMatch) {
     asof = `${dateMatch[3]}-${dateMatch[1].padStart(2,'0')}-${dateMatch[2].padStart(2,'0')}`;
   }
