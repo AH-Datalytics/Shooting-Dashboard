@@ -535,8 +535,8 @@ var CITIES = [
     id: 'baltimore',
     type: 'Victims',
     name: 'Baltimore, MD',
-    note: 'Shooting Incidents (NIBRS, Shooting=Y)',
-    dataUrl: 'https://data.baltimorecity.gov/',
+    note: 'Shooting Victims (NIBRS, Shooting=Y or gun homicide)',
+    dataUrl: 'https://data.baltimorecity.gov/datasets/nibrs-group-a-crime-data/explore?location=39.288065%2C-76.625846%2C11&showTable=true',
     count: function(s) { return autoOrManualCount('baltimore', 'baltimore', s); },
     latest: function() { return autoOrManualLatest('baltimore', 'baltimore'); }
   },

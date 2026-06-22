@@ -1567,20 +1567,33 @@ async function fetchChicago() {
 async function fetchBaltimore() {
   const base = 'https://services1.arcgis.com/UWYHeuuJISiGmgXx/arcgis/rest/services/NIBRS_GroupA_Crime_Data/FeatureServer/0/query';
   const CURRENT_YEAR = new Date().getFullYear();
+  const gunWeapons = [
+    'AUTOMATIC_FIREARM',
+    'AUTOMATIC_HANDGUN',
+    'AUTOMATIC_OTHER_FIREARM',
+    'AUTOMATIC_RIFLE',
+    'AUTOMATIC_SHOTGUN',
+    'FIREARM',
+    'HANDGUN',
+    'OTHER_FIREARM',
+    'RIFLE',
+    'SHOTGUN'
+  ];
+  const shootingVictimFilter = "(Shooting = 'Y' OR (Description = 'HOMICIDE' AND Weapon IN (" +
+    gunWeapons.map(w => "'" + w + "'").join(',') + ')))';
 
   async function arcCount(where) {
     const url = base + '?where=' + encodeURIComponent(where) + '&returnCountOnly=true&f=json';
-    const resp = await fetchUrl(url); if (resp.status !== 200) throw new Error('Baltimore: HTTP ' + resp.status);
-    const d = JSON.parse(resp.body.toString('utf8'));
+    const d = await fetchJsonRetry(url, { label: 'Baltimore count', attempts: 3, timeoutMs: 45000 });
     if (d.error) throw new Error('Baltimore: ' + (d.error.message || JSON.stringify(d.error).slice(0, 120)));
     return d.count;
   }
 
   // Latest
-  const latestUrl = base + '?where=' + encodeURIComponent("Shooting = 'Y'") +
-    '&outFields=CrimeDateTime&orderByFields=CrimeDateTime+DESC&resultRecordCount=1&f=json';
-  const latestResp = await fetchUrl(latestUrl);
-  const latestData = JSON.parse(latestResp.body.toString('utf8'));
+  const latestUrl = base + '?where=' + encodeURIComponent(shootingVictimFilter) +
+    '&outFields=CrimeDateTime&orderByFields=CrimeDateTime+DESC&resultRecordCount=1&returnGeometry=false&f=json';
+  const latestData = await fetchJsonRetry(latestUrl, { label: 'Baltimore latest', attempts: 3, timeoutMs: 45000 });
+  if (latestData.error) throw new Error('Baltimore: ' + (latestData.error.message || JSON.stringify(latestData.error).slice(0, 120)));
   let asof = null;
   if (latestData.features && latestData.features.length) {
     const raw = latestData.features[0].attributes.CrimeDateTime;
@@ -1591,9 +1604,9 @@ async function fetchBaltimore() {
   }
   if (!asof) throw new Error('Baltimore: no latest date');
 
-  const ytdWhere = "Shooting = 'Y' AND CrimeDateTime >= DATE '" + CURRENT_YEAR + "-01-01' AND CrimeDateTime <= DATE '" + asof + "'";
+  const ytdWhere = shootingVictimFilter + " AND CrimeDateTime >= DATE '" + CURRENT_YEAR + "-01-01' AND CrimeDateTime <= DATE '" + asof + "'";
   const priorEnd = (CURRENT_YEAR - 1) + asof.slice(4);
-  const priorWhere = "Shooting = 'Y' AND CrimeDateTime >= DATE '" + (CURRENT_YEAR - 1) + "-01-01' AND CrimeDateTime <= DATE '" + priorEnd + "'";
+  const priorWhere = shootingVictimFilter + " AND CrimeDateTime >= DATE '" + (CURRENT_YEAR - 1) + "-01-01' AND CrimeDateTime <= DATE '" + priorEnd + "'";
 
   const [ytd, prior] = await Promise.all([arcCount(ytdWhere), arcCount(priorWhere)]);
   console.log('Baltimore: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
@@ -2180,7 +2193,7 @@ async function main() {
 
     safe('Chicago',    fetchChicago,    180000),
     safe('NYC',        fetchNYC,        60000),
-    safe('Baltimore',  fetchBaltimore,  60000),
+    safe('Baltimore',  fetchBaltimore,  120000),
     safe('Boston',     fetchBoston,     60000),
     safe('Louisville', fetchLouisville, 60000),
     safe('Seattle',    fetchSeattle,    120000),
@@ -2265,6 +2278,7 @@ async function runSelectedCity() {
 
   const city = String(process.argv[cityArgIndex + 1] || '').toLowerCase().replace(/[^a-z]/g, '');
   const fetchers = {
+    baltimore: fetchBaltimore,
     chicago: fetchChicago,
     cincinnati: fetchCincinnati,
     lasvegas: fetchVegas,
