@@ -176,6 +176,39 @@ function pbiQuery(cluster, reportKey, modelId, datasetId, query) {
   });
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function fetchUrlRetry(targetUrl, options = {}) {
+  const attempts = options.attempts || 3;
+  const timeoutMs = options.timeoutMs || 30000;
+  const label = options.label || targetUrl;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const resp = await fetchUrl(targetUrl, timeoutMs);
+      if (resp.status >= 200 && resp.status < 300) return resp;
+      lastError = new Error(label + ': HTTP ' + resp.status);
+    } catch (e) {
+      lastError = e;
+    }
+
+    if (attempt < attempts) {
+      console.log(label + ': attempt ' + attempt + ' failed (' + lastError.message + '), retrying...');
+      await sleep(750 * attempt);
+    }
+  }
+
+  throw lastError || new Error(label + ': request failed');
+}
+
+async function fetchJsonRetry(targetUrl, options = {}) {
+  const resp = await fetchUrlRetry(targetUrl, options);
+  return JSON.parse(resp.body.toString('utf8'));
+}
+
 // Extract {year: count} map from PBI DSR response (DM1 rows with C: [year, count])
 function parsePbiYearCounts(dsr) {
   const result = {};
@@ -1210,7 +1243,135 @@ async function fetchMiamiDade() {
 
 // ─── Las Vegas (LVMPD Weekly Crime Report PDF) ──────────────────────────────
 
+function decodeHtmlEntities(s) {
+  return String(s || '')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
+
+function stripHtml(s) {
+  return decodeHtmlEntities(String(s || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim());
+}
+
+function absoluteUrl(href, baseUrl) {
+  try { return new URL(decodeHtmlEntities(href), baseUrl).href; }
+  catch { return null; }
+}
+
+function findVegasCrimeReportLink(html) {
+  const links = [];
+  const re = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    const href = absoluteUrl(m[1], 'https://www.lvmpd.com/about/transparency/statistics');
+    const text = stripHtml(m[2]).toLowerCase();
+    const hrefLower = String(href || '').toLowerCase();
+    if (!href) continue;
+    links.push({ href, text, hrefLower });
+  }
+
+  const crimeReport = links.find(l =>
+    l.text.includes('crime report') &&
+    (l.hrefLower.includes('.pdf') || l.hrefLower.includes('/showpublisheddocument/'))
+  );
+  if (crimeReport) return crimeReport.href;
+
+  const fallback = links.find(l =>
+    (l.text.includes('crime report') || l.hrefLower.includes('crime')) &&
+    (l.hrefLower.includes('.pdf') || l.hrefLower.includes('/showpublisheddocument/'))
+  );
+  return fallback ? fallback.href : null;
+}
+
+function findVegasCrimeReportLinkFromMarkdown(text) {
+  const m = String(text || '').match(/\[Crime Report[^\]]*?\]\((https:\/\/www\.lvmpd\.com\/home\/showpublisheddocument\/[^)]+)\)/i);
+  return m ? m[1] : null;
+}
+
+function readerUrl(targetUrl) {
+  return 'https://r.jina.ai/http://r.jina.ai/http://' + targetUrl;
+}
+
+function parseVegasReportText(text) {
+  const body = String(text || '').replace(/\s+/g, ' ');
+  const row = body.match(/Shooting Victims\s+(-?[\d,]+(?:\.\d+)?%?)\s+(-?[\d,]+(?:\.\d+)?%?)\s+(-?[\d,]+(?:\.\d+)?%?)\s+(-?[\d,]+(?:\.\d+)?%?)/i);
+  if (!row) throw new Error('Vegas reader: Shooting Victims row not found');
+
+  const ytd = parseInt(row[1].replace(/,/g, ''), 10);
+  const prior = parseInt(row[3].replace(/,/g, ''), 10);
+  if (!Number.isFinite(ytd) || !Number.isFinite(prior)) {
+    throw new Error('Vegas reader: could not parse Shooting Victims counts');
+  }
+
+  let asof = null;
+  const dateMatch = body.match(/[Ww]eek\s+[Ee]nding:?\s+(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (dateMatch) {
+    asof = dateMatch[3] + '-' + String(parseInt(dateMatch[1], 10)).padStart(2, '0') + '-' + String(parseInt(dateMatch[2], 10)).padStart(2, '0');
+  }
+  if (!asof) throw new Error('Vegas reader: week ending date not found');
+
+  return { ytd, prior, asof };
+}
+
+async function fetchVegasViaReader(pdfLink) {
+  let reportLink = pdfLink;
+  if (!reportLink) {
+    const statsResp = await fetchUrlRetry(readerUrl('https://www.lvmpd.com/about/transparency/statistics'), {
+      label: 'Vegas reader stats page',
+      attempts: 2,
+      timeoutMs: 30000
+    });
+    reportLink = findVegasCrimeReportLinkFromMarkdown(statsResp.body.toString('utf8'));
+    if (!reportLink) throw new Error('Vegas reader: crime report link not found');
+  }
+
+  console.log('Vegas: using reader fallback for', reportLink);
+  const reportResp = await fetchUrlRetry(readerUrl(reportLink), {
+    label: 'Vegas reader report',
+    attempts: 2,
+    timeoutMs: 45000
+  });
+  const result = parseVegasReportText(reportResp.body.toString('utf8'));
+  console.log('Vegas reader: ytd=' + result.ytd + ' prior=' + result.prior + ' asof=' + result.asof);
+  return result;
+}
+
+async function downloadPdfWithBrowser(page, pdfLink) {
+  const downloadPromise = page.waitForEvent('download', { timeout: 15000 }).catch(() => null);
+  const response = await page.goto(pdfLink, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(e => {
+    console.log('Vegas: browser PDF navigation failed:', e.message);
+    return null;
+  });
+  const download = await downloadPromise;
+  if (download) {
+    const downloadPath = await download.path();
+    if (!downloadPath) throw new Error('Vegas: PDF download path null');
+    return require('fs').readFileSync(downloadPath);
+  }
+  if (response && response.ok()) {
+    return await response.body();
+  }
+  throw new Error('Vegas: PDF request failed' + (response ? ' HTTP ' + response.status() : ''));
+}
+
 async function fetchVegas() {
+  const statsUrl = 'https://www.lvmpd.com/about/transparency/statistics';
+  let pdfLink = null;
+
+  try {
+    const statsResp = await fetchUrlRetry(statsUrl, { label: 'Vegas stats page', attempts: 2, timeoutMs: 30000 });
+    const statsHtml = statsResp.body.toString('utf8');
+    if (!/Access Denied/i.test(statsHtml)) {
+      pdfLink = findVegasCrimeReportLink(statsHtml);
+      if (pdfLink) console.log('Vegas: found PDF from static HTML:', pdfLink);
+    }
+  } catch (e) {
+    console.log('Vegas: static HTML lookup failed:', e.message);
+  }
+
   const { chromium } = require('playwright');
   const browser = await chromium.launch({
     headless: true,
@@ -1228,32 +1389,35 @@ async function fetchVegas() {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
     });
 
-    console.log('Vegas: navigating to statistics page...');
-    await page.goto('https://www.lvmpd.com/about/transparency/statistics', {
-      waitUntil: 'networkidle', timeout: 30000
-    });
+    if (!pdfLink) {
+      console.log('Vegas: navigating to statistics page...');
+      await page.goto(statsUrl, {
+        waitUntil: 'domcontentloaded', timeout: 30000
+      });
 
-    // Find the crime report PDF link
-    const pdfLink = await page.evaluate(() => {
-      const links = Array.from(document.querySelectorAll('a[href]'));
-      for (const a of links) {
-        const text = a.textContent.toLowerCase();
-        const href = a.href.toLowerCase();
-        if ((text.includes('crime report') || text.includes('weekly crime')) &&
-            (href.includes('.pdf') || text.includes('pdf'))) {
-          return a.href;
+      // Find the crime report PDF link
+      pdfLink = await page.evaluate(() => {
+        const links = Array.from(document.querySelectorAll('a[href]'));
+        for (const a of links) {
+          const text = a.textContent.toLowerCase();
+          const href = a.href.toLowerCase();
+          if (text.includes('crime report') &&
+              (href.includes('.pdf') || href.includes('/showpublisheddocument/'))) {
+            return a.href;
+          }
         }
-      }
-      // Fallback: any PDF link with 'crime' in text or URL
-      for (const a of links) {
-        const text = a.textContent.toLowerCase();
-        const href = a.href.toLowerCase();
-        if (href.includes('.pdf') && (text.includes('crime') || href.includes('crime'))) {
-          return a.href;
+        // Fallback: any PDF/published document link with 'crime' in text or URL
+        for (const a of links) {
+          const text = a.textContent.toLowerCase();
+          const href = a.href.toLowerCase();
+          if ((href.includes('.pdf') || href.includes('/showpublisheddocument/')) &&
+              (text.includes('crime') || href.includes('crime'))) {
+            return a.href;
+          }
         }
-      }
-      return null;
-    });
+        return null;
+      });
+    }
 
     if (!pdfLink) {
       // Log all links for debugging
@@ -1263,19 +1427,20 @@ async function fetchVegas() {
           .filter(l => l.href.includes('.pdf') || l.text.toLowerCase().includes('report'))
       );
       console.log('Vegas: no crime report PDF found. Links:', JSON.stringify(allLinks));
-      throw new Error('Vegas: could not find crime report PDF link on statistics page');
+      pdfLink = 'https://www.lvmpd.com/home/showpublisheddocument/8456';
+      console.log('Vegas: falling back to stable crime report document URL:', pdfLink);
     }
 
     console.log('Vegas: downloading PDF from', pdfLink);
 
-    // Download the PDF
-    const [download] = await Promise.all([
-      page.waitForEvent('download', { timeout: 30000 }),
-      page.goto(pdfLink, { waitUntil: 'commit', timeout: 30000 }).catch(() => {})
-    ]);
-    const downloadPath = await download.path();
-    if (!downloadPath) throw new Error('Vegas: PDF download path null');
-    const pdfBuffer = require('fs').readFileSync(downloadPath);
+    let pdfBuffer;
+    try {
+      pdfBuffer = await downloadPdfWithBrowser(page, pdfLink);
+    } catch (e) {
+      console.log('Vegas: direct PDF download failed:', e.message);
+      await browser.close();
+      return await fetchVegasViaReader(pdfLink);
+    }
 
     if (pdfBuffer.length < 5000 || pdfBuffer[0] !== 0x25) {
       throw new Error('Vegas: downloaded file is not a valid PDF (' + pdfBuffer.length + ' bytes)');
@@ -1306,19 +1471,13 @@ async function fetchVegas() {
 
     if (nums.length < 2) throw new Error('Vegas: not enough numbers after Shooting Victims: ' + nums.join(','));
 
-    // The weekly crime report typically shows columns like:
-    // Crime | This Week | Last Week | Weekly Change | YTD Current | YTD Prior | YTD Change
-    // We need YTD Current and YTD Prior — usually the larger numbers after the weekly ones
-    // Strategy: if we find >=4 numbers, take indices 3,4 (YTD cols after weekly cols)
-    // If only 2-3, take last two as YTD current and prior
+    // Columns on the LVMPD statistical report are:
+    // Current YTD Reported, Current YTD Arrested, Previous YTD Reported, Previous YTD Arrested,
+    // Percent Change Reported, Percent Change Arrested. Shooting victims use Reported counts.
     let ytd, prior;
-    if (nums.length >= 5) {
-      // Columns: ThisWeek, LastWeek, Change, YTD_Current, YTD_Prior, [YTD_Change]
-      ytd = nums[3];
-      prior = nums[4];
-    } else if (nums.length >= 4) {
-      ytd = nums[2];
-      prior = nums[3];
+    if (nums.length >= 4) {
+      ytd = nums[0];
+      prior = nums[2];
     } else {
       ytd = nums[0];
       prior = nums[1];
@@ -1336,7 +1495,11 @@ async function fetchVegas() {
     const page1Tokens = await extractPdfTokens(pdfBuffer, 1);
     const page1Text = page1Tokens.join(' ');
     let asof = null;
-    const dateMatch = page1Text.match(/[Ww]eek\s+[Ee]nding\s+(\w+)\s+(\d{1,2}),?\s+(\d{4})/);
+    const numericDateMatch = page1Text.match(/[Ww]eek\s+[Ee]nding:?\s+(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (numericDateMatch) {
+      asof = numericDateMatch[3] + '-' + String(parseInt(numericDateMatch[1])).padStart(2,'0') + '-' + String(parseInt(numericDateMatch[2])).padStart(2,'0');
+    }
+    const dateMatch = !asof && page1Text.match(/[Ww]eek\s+[Ee]nding\s+(\w+)\s+(\d{1,2}),?\s+(\d{4})/);
     if (dateMatch) {
       const months = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12};
       const mo = months[dateMatch[1].toLowerCase()];
@@ -1344,7 +1507,11 @@ async function fetchVegas() {
     }
     if (!asof) {
       // Try page 2
-      const dateMatch2 = joined.match(/[Ww]eek\s+[Ee]nding\s+(\w+)\s+(\d{1,2}),?\s+(\d{4})/);
+      const numericDateMatch2 = joined.match(/[Ww]eek\s+[Ee]nding:?\s+(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if (numericDateMatch2) {
+        asof = numericDateMatch2[3] + '-' + String(parseInt(numericDateMatch2[1])).padStart(2,'0') + '-' + String(parseInt(numericDateMatch2[2])).padStart(2,'0');
+      }
+      const dateMatch2 = !asof && joined.match(/[Ww]eek\s+[Ee]nding\s+(\w+)\s+(\d{1,2}),?\s+(\d{4})/);
       if (dateMatch2) {
         const months = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12};
         const mo = months[dateMatch2[1].toLowerCase()];
@@ -1376,16 +1543,13 @@ async function fetchChicago() {
 
   async function socrataCount(where) {
     const url = base + '?$where=' + encodeURIComponent(where) + '&$select=count(*)%20as%20n&$limit=1';
-    const resp = await fetchUrl(url); if (resp.status !== 200) throw new Error('Chicago: HTTP ' + resp.status);
-    const d = JSON.parse(resp.body.toString('utf8'));
+    const d = await fetchJsonRetry(url, { label: 'Chicago count', attempts: 3, timeoutMs: 45000 });
     return parseInt(d[0] && d[0].n ? d[0].n : 0);
   }
 
   // Latest date
   const latestUrl = base + '?$order=date%20DESC&$limit=1&$select=date&$where=' + encodeURIComponent("gunshot_injury_i = 'YES'");
-  const latestResp = await fetchUrl(latestUrl);
-  if (latestResp.status !== 200) throw new Error('Chicago latest: HTTP ' + latestResp.status);
-  const latestData = JSON.parse(latestResp.body.toString('utf8'));
+  const latestData = await fetchJsonRetry(latestUrl, { label: 'Chicago latest', attempts: 3, timeoutMs: 45000 });
   const asof = latestData[0] && latestData[0].date ? latestData[0].date.slice(0, 10) : null;
   if (!asof) throw new Error('Chicago: no latest date');
 
@@ -2107,8 +2271,12 @@ async function runSelectedCity() {
 
   const city = String(process.argv[cityArgIndex + 1] || '').toLowerCase().replace(/[^a-z]/g, '');
   const fetchers = {
+    chicago: fetchChicago,
+    cincinnati: fetchCincinnati,
+    lasvegas: fetchVegas,
     memphis: fetchMemphis,
     miamidade: fetchMiamiDade,
+    seattle: fetchSeattle,
     denver: fetchDenver
   };
   if (!fetchers[city]) throw new Error('Unknown --city value: ' + (process.argv[cityArgIndex + 1] || ''));

@@ -126,20 +126,18 @@
     "ok": true
   },
   "lasvegas": {
-    "ytd": 91,
-    "prior": 121,
-    "asof": "2026-05-17",
-    "fetchedAt": "2026-05-20T00:00:00.000Z",
-    "ok": true,
-    "stale": true
+    "ytd": 110,
+    "prior": 150,
+    "asof": "2026-06-14",
+    "fetchedAt": "2026-06-22T16:51:31.000Z",
+    "ok": true
   },
   "chicago": {
-    "ytd": 757,
-    "prior": 687,
-    "asof": "2026-06-14",
-    "fetchedAt": "2026-06-17T11:39:54.729Z",
-    "ok": true,
-    "stale": true
+    "ytd": 812,
+    "prior": 718,
+    "asof": "2026-06-20",
+    "fetchedAt": "2026-06-22T16:51:31.000Z",
+    "ok": true
   },
   "nyc": {
     "ytd": 334,
