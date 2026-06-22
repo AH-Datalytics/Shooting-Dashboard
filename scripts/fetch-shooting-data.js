@@ -1710,14 +1710,12 @@ async function fetchCincinnati() {
 
   async function socrataCount(where) {
     const url = base + '?$where=' + encodeURIComponent(where) + '&$select=count(*)%20as%20n&$limit=1';
-    const resp = await fetchUrl(url); if (resp.status !== 200) throw new Error('Cincinnati: HTTP ' + resp.status);
-    const d = JSON.parse(resp.body.toString('utf8'));
+    const d = await fetchJsonRetry(url, { label: 'Cincinnati count', attempts: 3, timeoutMs: 45000 });
     return parseInt(d[0] && d[0].n ? d[0].n : 0);
   }
 
   const latestUrl = base + '?$order=dateoccurred%20DESC&$limit=1&$select=dateoccurred';
-  const latestResp = await fetchUrl(latestUrl);
-  const latestData = JSON.parse(latestResp.body.toString('utf8'));
+  const latestData = await fetchJsonRetry(latestUrl, { label: 'Cincinnati latest', attempts: 3, timeoutMs: 45000 });
   let asof = null;
   if (latestData[0] && latestData[0].dateoccurred) {
     const raw = latestData[0].dateoccurred;
@@ -2186,7 +2184,7 @@ async function main() {
     safe('Boston',     fetchBoston,     60000),
     safe('Louisville', fetchLouisville, 60000),
     safe('Seattle',    fetchSeattle,    120000),
-    safe('Cincinnati', fetchCincinnati, 60000),
+    safe('Cincinnati', fetchCincinnati, 120000),
     safe('StLouis',    fetchStLouis,    60000),
     safe('NewOrleans', fetchNewOrleans, 120000),
     safe('Charlotte',  fetchCharlotte,  60000),
