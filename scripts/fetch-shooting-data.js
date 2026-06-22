@@ -2178,7 +2178,7 @@ async function main() {
 
     safe('LasVegas',   fetchVegas,      120000),
 
-    safe('Chicago',    fetchChicago,    60000),
+    safe('Chicago',    fetchChicago,    180000),
     safe('NYC',        fetchNYC,        60000),
     safe('Baltimore',  fetchBaltimore,  60000),
     safe('Boston',     fetchBoston,     60000),
