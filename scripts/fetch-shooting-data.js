@@ -1848,7 +1848,7 @@ async function fetchNYC() {
 // ─── St. Louis (CompStat PDF) ───────────────────────────────────────────────
 
 async function fetchStLouis() {
-  const pdfUrl = 'https://slmpd.org/wp-content/uploads/httpdocs/CompStat/Compstat01A.PDF';
+  const pdfUrl = 'https://slmpd.org/wp-content/uploads/httpdocs/CompStat/Compstat01A.PDF?time=asap&t=' + Math.floor(Date.now() / 1000);
   console.log('StLouis: fetching CompStat PDF...');
   const resp = await fetchUrl(pdfUrl, 20000);
   if (resp.status !== 200) throw new Error('StLouis: HTTP ' + resp.status);
@@ -2286,7 +2286,8 @@ async function runSelectedCity() {
     miamidade: fetchMiamiDade,
     neworleans: fetchNewOrleans,
     seattle: fetchSeattle,
-    denver: fetchDenver
+    denver: fetchDenver,
+    stlouis: fetchStLouis
   };
   if (!fetchers[city]) throw new Error('Unknown --city value: ' + (process.argv[cityArgIndex + 1] || ''));
 
