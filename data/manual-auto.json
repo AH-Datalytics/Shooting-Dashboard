@@ -168,12 +168,11 @@
     "ok": true
   },
   "seattle": {
-    "ytd": 37,
-    "prior": 52,
-    "asof": "2026-06-15",
-    "fetchedAt": "2026-06-21T11:09:07.564Z",
-    "ok": true,
-    "stale": true
+    "ytd": 39,
+    "prior": 56,
+    "asof": "2026-06-21",
+    "fetchedAt": "2026-06-22T17:03:30.000Z",
+    "ok": true
   },
   "cincinnati": {
     "ytd": 97,
@@ -193,9 +192,8 @@
     "ytd": 109,
     "prior": 123,
     "asof": "2026-06-20",
-    "fetchedAt": "2026-06-22T12:06:25.173Z",
-    "ok": true,
-    "stale": true
+    "fetchedAt": "2026-06-22T17:03:30.000Z",
+    "ok": true
   },
   "charlotte": {
     "ytd": 102,

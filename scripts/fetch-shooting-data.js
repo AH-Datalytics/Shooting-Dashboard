@@ -1683,14 +1683,12 @@ async function fetchSeattle() {
 
   async function socrataCount(where) {
     const url = base + '?$where=' + encodeURIComponent(where) + '&$select=count(DISTINCT%20report_number)%20as%20n&$limit=1';
-    const resp = await fetchUrl(url); if (resp.status !== 200) throw new Error('Seattle: HTTP ' + resp.status);
-    const d = JSON.parse(resp.body.toString('utf8'));
+    const d = await fetchJsonRetry(url, { label: 'Seattle count', attempts: 3, timeoutMs: 45000 });
     return parseInt(d[0] && d[0].n ? d[0].n : 0);
   }
 
   const latestUrl = base + '?$order=offense_date%20DESC&$limit=1&$select=offense_date&$where=' + encodeURIComponent(shootingFilter);
-  const latestResp = await fetchUrl(latestUrl);
-  const latestData = JSON.parse(latestResp.body.toString('utf8'));
+  const latestData = await fetchJsonRetry(latestUrl, { label: 'Seattle latest', attempts: 3, timeoutMs: 45000 });
   const asof = latestData[0] && latestData[0].offense_date ? latestData[0].offense_date.slice(0, 10) : null;
   if (!asof) throw new Error('Seattle: no latest date');
 
@@ -1745,15 +1743,13 @@ async function fetchNewOrleans() {
 
   async function socrataCount(baseUrl, where) {
     const url = baseUrl + '?$where=' + encodeURIComponent(where) + '&$select=count(*)+as+n&$limit=1';
-    const resp = await fetchUrl(url); if (resp.status !== 200) throw new Error('NewOrleans: HTTP ' + resp.status);
-    const d = JSON.parse(resp.body.toString('utf8'));
+    const d = await fetchJsonRetry(url, { label: 'NewOrleans count', attempts: 3, timeoutMs: 45000 });
     return parseInt(d[0] && d[0].n ? d[0].n : 0);
   }
 
   const cfsFilter = "(type_ = '30S' OR type_ = '34S') AND disposition = 'RTF'";
   const latestUrl = getUrl(CURRENT_YEAR) + '?$order=timecreate%20DESC&$limit=1&$select=timecreate&$where=' + encodeURIComponent(cfsFilter);
-  const latestResp = await fetchUrl(latestUrl);
-  const latestData = JSON.parse(latestResp.body.toString('utf8'));
+  const latestData = await fetchJsonRetry(latestUrl, { label: 'NewOrleans latest', attempts: 3, timeoutMs: 45000 });
   const asof = latestData[0] && latestData[0].timecreate ? latestData[0].timecreate.slice(0, 10) : null;
   if (!asof) throw new Error('NewOrleans: no latest date');
 
@@ -2189,10 +2185,10 @@ async function main() {
     safe('Baltimore',  fetchBaltimore,  60000),
     safe('Boston',     fetchBoston,     60000),
     safe('Louisville', fetchLouisville, 60000),
-    safe('Seattle',    fetchSeattle,    60000),
+    safe('Seattle',    fetchSeattle,    120000),
     safe('Cincinnati', fetchCincinnati, 60000),
     safe('StLouis',    fetchStLouis,    60000),
-    safe('NewOrleans', fetchNewOrleans, 60000),
+    safe('NewOrleans', fetchNewOrleans, 120000),
     safe('Charlotte',  fetchCharlotte,  60000),
     safe('Rochester',  fetchRochester,  60000),
 
@@ -2276,6 +2272,7 @@ async function runSelectedCity() {
     lasvegas: fetchVegas,
     memphis: fetchMemphis,
     miamidade: fetchMiamiDade,
+    neworleans: fetchNewOrleans,
     seattle: fetchSeattle,
     denver: fetchDenver
   };
