@@ -176,6 +176,53 @@ function pbiQuery(cluster, reportKey, modelId, datasetId, query) {
   });
 }
 
+function pbiDataShapeQuery(cluster, reportKey, modelId, datasetId, command, sources = []) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      version: '1.0.0',
+      queries: [{
+        Query: { Commands: [{ SemanticQueryDataShapeCommand: command }] },
+        QueryId: '',
+        ApplicationContext: { DatasetId: datasetId, Sources: sources }
+      }],
+      cancelQueries: [],
+      modelId
+    });
+
+    const req = https.request({
+      hostname: cluster,
+      path: '/public/reports/querydata?synchronous=true',
+      method: 'POST',
+      headers: {
+        'X-PowerBI-ResourceKey': reportKey,
+        'Content-Type': 'application/json',
+        'Accept-Encoding': 'gzip'
+      }
+    }, res => {
+      let stream = res;
+      if (res.headers['content-encoding'] === 'gzip') stream = res.pipe(zlib.createGunzip());
+      const chunks = [];
+      stream.on('data', c => chunks.push(c));
+      stream.on('end', () => {
+        try {
+          const j = JSON.parse(Buffer.concat(chunks).toString());
+          if (j.results && j.results[0].result.data.dsr) {
+            resolve(j.results[0].result.data.dsr);
+          } else {
+            reject(new Error('PBI visual query error: ' + JSON.stringify(j).substring(0, 200)));
+          }
+        } catch (e) {
+          reject(new Error('PBI visual parse error: ' + e.message));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(30000, () => { req.destroy(); reject(new Error('PBI visual timeout')); });
+    req.write(body);
+    req.end();
+  });
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -2285,6 +2332,7 @@ async function runSelectedCity() {
     memphis: fetchMemphis,
     miamidade: fetchMiamiDade,
     neworleans: fetchNewOrleans,
+    portsmouth: fetchPortsmouth,
     seattle: fetchSeattle,
     denver: fetchDenver,
     stlouis: fetchStLouis
@@ -2488,151 +2536,84 @@ async function fetchDenver() {
 
 
 async function fetchPortsmouth() {
-
   const { chromium } = require('playwright');
-
+  const yr = new Date().getFullYear();
+  const cluster = 'wabi-us-gov-virginia-api.analysis.usgovcloudapi.net';
+  const reportKey = 'd77fd2c3-982b-4843-98ee-ed2cfd839ecd';
+  const modelId = 1497723;
+  const datasetId = 'e8e96817-5c6b-4691-8745-4ffaf7d3a39b';
+  const reportId = 'f774ff90-8529-4a94-8ee2-3bb97cce137a';
   const browser = await chromium.launch({ headless: true });
-
   const page    = await browser.newPage();
-
   await page.setViewportSize({ width: 1536, height: 900 });
-
   page.setDefaultTimeout(30000);
 
-
-
   const url = 'https://app.powerbigov.us/view?r=eyJrIjoiZDc3ZmQyYzMtOTgyYi00ODQzLTk4ZWUtZWQyY2ZkODM5ZWNkIiwidCI6ImM3N2RiNGQ4LWEwZjUtNDU0YS05MmMxLWI3ZDg0YzY0ZmQ0NCJ9';
-
   console.log('Portsmouth: loading Power BI dashboard...');
-
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
   await waitForPowerBI(page, 15000);
 
-
-
   const bodyText = await page.evaluate(() => document.body.innerText);
-
   console.log('Portsmouth page sample:', bodyText.substring(0, 800));
 
-
-
   let asof = null;
-
   const dateMatch = bodyText.match(/(?:Last\s+(?:Database\s+)?Update[d]?|Updated)[:\s]*(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
-
   if (dateMatch) {
-
     asof = `${dateMatch[3]}-${dateMatch[1].padStart(2,'0')}-${dateMatch[2].padStart(2,'0')}`;
-
   }
-
-
-
-  const screenshotBuf = await page.screenshot({ fullPage: false });
-
   await browser.close();
 
-  console.log('Portsmouth: screenshot taken, size:', screenshotBuf.length, 'bytes');
+  const dsr = await pbiDataShapeQuery(
+    cluster,
+    reportKey,
+    modelId,
+    datasetId,
+    {
+      Query: {
+        Version: 2,
+        From: [{ Name: 'c', Entity: 'Crimes', Type: 0 }],
+        Select: [
+          { HierarchyLevel: { Expression: { Hierarchy: { Expression: { PropertyVariationSource: { Expression: { SourceRef: { Source: 'c' } }, Name: 'Variation', Property: 'Date Occurred' } }, Hierarchy: 'Date Hierarchy' } }, Level: 'Year' }, Name: 'Crimes.date_occu.Variation.Date Hierarchy.Year', NativeReferenceName: 'date_occu Year' },
+          { Aggregation: { Expression: { Column: { Expression: { SourceRef: { Source: 'c' } }, Property: 'GSWs' } }, Function: 0 }, Name: 'Sum(Crimes.GSWs)', NativeReferenceName: 'Total Gunshot Victims' },
+          { Measure: { Expression: { SourceRef: { Source: 'c' } }, Property: 'GSW Non-Fatal' }, Name: 'Crimes.GSW Non-Fatal', NativeReferenceName: 'Non-Fatal' },
+          { Measure: { Expression: { SourceRef: { Source: 'c' } }, Property: 'FatalityPercent' }, Name: 'Crimes.FatalityPercent', NativeReferenceName: 'Fatality %' },
+          { Aggregation: { Expression: { Column: { Expression: { SourceRef: { Source: 'c' } }, Property: 'Suicide Deaths' } }, Function: 0 }, Name: 'Sum(Crimes.Suicide Deaths)', NativeReferenceName: 'Fatal (Suicide)' },
+          { Aggregation: { Expression: { Column: { Expression: { SourceRef: { Source: 'c' } }, Property: 'Non-Suicide Deaths' } }, Function: 0 }, Name: 'Sum(Crimes.Non-Suicide Deaths)', NativeReferenceName: 'Fatal (Non-Suicide)' }
+        ],
+        Where: [
+          { Condition: { Comparison: { ComparisonKind: 0, Left: { Column: { Expression: { SourceRef: { Source: 'c' } }, Property: 'chrgcnt' } }, Right: { Literal: { Value: '1L' } } } } },
+          { Condition: { In: { Expressions: [{ Column: { Expression: { SourceRef: { Source: 'c' } }, Property: 'YTDFlag' } }], Values: [[{ Literal: { Value: 'true' } }]] } } }
+        ]
+      },
+      Binding: {
+        Primary: { Groupings: [{ Projections: [0, 1, 2, 3, 4, 5] }] },
+        DataReduction: { DataVolume: 4, Primary: { Sample: {} } },
+        Version: 1
+      },
+      ExecutionMetricsKind: 1
+    },
+    [{ ReportId: reportId, VisualId: 'ccd3c794b5fbb8cbc018' }]
+  );
 
-
-
-  const base64Image = screenshotBuf.toString('base64');
-
-  const yr = new Date().getFullYear();
-
-
-
-  const promptText = [
-
-    'This is a bar chart titled "GSW Victims – Injuries/Death & Rate (YTD)" from Portsmouth Police.',
-
-    'Each year has a group of bars. Above each group is a TOTAL number shown with a dashed orange line.',
-
-    'There is also a small purple bar at the bottom of each group labeled "Fatal (Suicide)" with a small number.',
-
-    '',
-
-    'For the two RIGHTMOST year groups (' + yr + ' and ' + (yr-1) + '), read:',
-
-    '1. The TOTAL number shown at the very top (dashed orange line) - this is the largest/highest number for each year',
-
-    '2. The purple Fatal (Suicide) number - this is usually the smallest number, at the bottom',
-
-    '',
-
-    'Also look for any date indicator like "Last Updated" or a date range on the page.',
-
-    '',
-
-    'Reply ONLY in this exact format:',
-
-    yr + '_TOTAL=N ' + yr + '_SUICIDE=N ' + (yr-1) + '_TOTAL=N ' + (yr-1) + '_SUICIDE=N ASOF=YYYY-MM-DD',
-
-    'If you cannot find a date, omit ASOF.'
-
-  ].join('\n');
-
-
-
-  let visionText = await callClaudeVision(base64Image, 'image/png', promptText,
-    { maxTokens: 128 });
-
-  console.log('Portsmouth vision response:', visionText);
-
-  for (let retry = 1; retry <= 2 && !visionText.includes('TOTAL='); retry++) {
-
-    console.log('Portsmouth: retrying vision call attempt ' + retry + '...');
-
-    await new Promise(r => setTimeout(r, 3000));
-
-    visionText = await callClaudeVision(base64Image, 'image/png', promptText,
-      { maxTokens: 128 });
-
-    console.log('Portsmouth vision retry ' + retry + ' response:', visionText);
-
+  const rows = dsr?.DS?.[0]?.PH?.[0]?.DM0 || [];
+  const byYear = {};
+  for (const row of rows) {
+    const c = row.C || [];
+    byYear[c[0]] = { total: c[1], nonFatal: c[2], suicide: c[4], nonSuicide: c[5] };
   }
 
+  const cur = byYear[yr];
+  const prev = byYear[yr - 1];
+  if (!cur || !prev) throw new Error('Portsmouth: missing YTD rows. Years: ' + Object.keys(byYear).join(', '));
 
+  const ytd = cur.total - cur.suicide;
+  const prior = prev.total - prev.suicide;
 
-  const ytdTotal = visionText.match(new RegExp(yr + '_TOTAL=(\\d+)'));
-
-  const ytdSui   = visionText.match(new RegExp(yr + '_SUICIDE=(\\d+)'));
-
-  const prTotal  = visionText.match(new RegExp((yr-1) + '_TOTAL=(\\d+)'));
-
-  const prSui    = visionText.match(new RegExp((yr-1) + '_SUICIDE=(\\d+)'));
-
-
-
-  console.log('Portsmouth parsed: ' + yr + ' T=' + (ytdTotal?.[1]||'?') + ' S=' + (ytdSui?.[1]||'?') +
-
-    ' | ' + (yr-1) + ' T=' + (prTotal?.[1]||'?') + ' S=' + (prSui?.[1]||'?'));
-
-
-
-  const ytd = (ytdTotal && ytdSui) ? parseInt(ytdTotal[1]) - parseInt(ytdSui[1]) : null;
-
-  const prior = (prTotal && prSui) ? parseInt(prTotal[1]) - parseInt(prSui[1]) : null;
-
-
-
-  if (!asof) {
-
-    const asofV = visionText.match(/ASOF=(\d{4}-\d{2}-\d{2})/);
-
-    if (asofV) asof = asofV[1];
-
-  }
-
-
-
+  console.log('Portsmouth parsed: ' + yr + ' total=' + cur.total + ' suicide=' + cur.suicide +
+    ' | ' + (yr-1) + ' total=' + prev.total + ' suicide=' + prev.suicide);
   console.log('Portsmouth final: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
 
-  if (ytd === null || prior === null) throw new Error('Portsmouth: vision parse failed: ' + visionText);
-
   return { ytd, prior, asof };
-
 }
 
 
