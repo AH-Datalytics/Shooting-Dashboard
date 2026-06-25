@@ -1958,7 +1958,8 @@ async function fetchCharlotte() {
 
   const ytd = sumYear(CURRENT_YEAR);
   const prior = sumYear(CURRENT_YEAR - 1);
-  const asof = CURRENT_YEAR + '-' + String(maxMonth).padStart(2,'0') + '-28';
+  const lastDay = new Date(CURRENT_YEAR, maxMonth, 0).getDate();
+  const asof = CURRENT_YEAR + '-' + String(maxMonth).padStart(2,'0') + '-' + String(lastDay).padStart(2,'0');
 
   console.log('Charlotte: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof + ' (through month ' + maxMonth + ')');
   return { ytd, prior, asof };
@@ -2326,6 +2327,7 @@ async function runSelectedCity() {
   const city = String(process.argv[cityArgIndex + 1] || '').toLowerCase().replace(/[^a-z]/g, '');
   const fetchers = {
     baltimore: fetchBaltimore,
+    charlotte: fetchCharlotte,
     chicago: fetchChicago,
     cincinnati: fetchCincinnati,
     lasvegas: fetchVegas,
