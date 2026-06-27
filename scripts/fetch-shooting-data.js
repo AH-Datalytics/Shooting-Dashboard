@@ -2486,34 +2486,27 @@ async function fetchDenver() {
   console.log('Denver: querying Power BI API (YTD measures)...');
   const yr = new Date().getFullYear();
 
-  // Denver has explicit YTD measures that compare same-period across years
+  // Denver's report uses the "Bullet in Body" measures for Firearm Homicides + NFS.
   const dsr = await pbiQuery(
     'wabi-us-gov-iowa-api.analysis.usgovcloudapi.net',
     '9c0f840f-824d-4dec-8f61-311d278e3c42',
     713694, 'f869e8c9-a501-45a6-a4c2-d6eae79af2ed',
     {
       Version: 2,
-      From: [
-        { Name: 's', Entity: '2021-2026 Shooting', Type: 0 },
-        { Name: 'h', Entity: '2021-2026 Homicides', Type: 0 }
-      ],
+      From: [{ Name: 'b', Entity: 'Bullet in Body', Type: 0 }],
       Select: [
-        { Measure: { Expression: { SourceRef: { Source: 's' } }, Property: yr + 'YTD_NFS' }, Name: 'NFS_YTD' },
-        { Measure: { Expression: { SourceRef: { Source: 's' } }, Property: (yr-1) + 'YTD_NFS' }, Name: 'NFS_Prior' },
-        { Measure: { Expression: { SourceRef: { Source: 'h' } }, Property: yr + 'YTD_Hom' }, Name: 'Hom_YTD' },
-        { Measure: { Expression: { SourceRef: { Source: 'h' } }, Property: (yr-1) + 'YTD_Hom' }, Name: 'Hom_Prior' }
+        { Measure: { Expression: { SourceRef: { Source: 'b' } }, Property: yr + 'YTD_BIB' }, Name: 'BIB_YTD' },
+        { Measure: { Expression: { SourceRef: { Source: 'b' } }, Property: (yr-1) + 'YTD_BIB' }, Name: 'BIB_Prior' }
       ]
     }
   );
 
-  // Scalar response: DM0[0].C = [nfsYtd, nfsPrior, homYtd, homPrior]
+  // Scalar response: DM0[0].C = [bibYtd, bibPrior]
   const vals = dsr.DS[0].PH[0].DM0[0].C;
-  if (!vals || vals.length < 4) throw new Error('Denver: unexpected PBI response');
+  if (!vals || vals.length < 2) throw new Error('Denver: unexpected PBI response');
 
-  const nfsYtd = vals[0] || 0, nfsPrior = vals[1] || 0;
-  const homYtd = vals[2] || 0, homPrior = vals[3] || 0;
-  const ytd = nfsYtd + homYtd;
-  const prior = nfsPrior + homPrior;
+  const ytd = vals[0] || 0;
+  const prior = vals[1] || 0;
 
   const asof = await pbiAsOf(
     'wabi-us-gov-iowa-api.analysis.usgovcloudapi.net',
@@ -2528,7 +2521,7 @@ async function fetchDenver() {
     },
     'Denver'
   );
-  console.log('Denver: NFS=' + nfsYtd + '/' + nfsPrior + ' Hom=' + homYtd + '/' + homPrior + ' ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
+  console.log('Denver: BIB ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
   return { ytd, prior, asof };
 }
 

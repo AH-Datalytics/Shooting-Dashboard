@@ -106,8 +106,8 @@
     "ok": true
   },
   "denver": {
-    "ytd": 81,
-    "prior": 85,
+    "ytd": 75,
+    "prior": 80,
     "asof": "2026-06-21",
     "fetchedAt": "2026-06-27T18:08:51.953Z",
     "ok": true
