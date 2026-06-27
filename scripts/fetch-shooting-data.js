@@ -1339,7 +1339,7 @@ function findVegasCrimeReportLinkFromMarkdown(text) {
 }
 
 function readerUrl(targetUrl) {
-  return 'https://r.jina.ai/http://r.jina.ai/http://' + targetUrl;
+  return 'https://r.jina.ai/http://' + targetUrl;
 }
 
 function parseVegasReportText(text) {
@@ -1474,8 +1474,8 @@ async function fetchVegas() {
           .filter(l => l.href.includes('.pdf') || l.text.toLowerCase().includes('report'))
       );
       console.log('Vegas: no crime report PDF found. Links:', JSON.stringify(allLinks));
-      pdfLink = 'https://www.lvmpd.com/home/showpublisheddocument/8456';
-      console.log('Vegas: falling back to stable crime report document URL:', pdfLink);
+      await browser.close();
+      return await fetchVegasViaReader(null);
     }
 
     console.log('Vegas: downloading PDF from', pdfLink);
