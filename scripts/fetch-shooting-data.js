@@ -223,6 +223,38 @@ function pbiDataShapeQuery(cluster, reportKey, modelId, datasetId, command, sour
   });
 }
 
+function pbiGetJson(cluster, reportKey, requestPath) {
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: cluster,
+      path: requestPath,
+      method: 'GET',
+      headers: {
+        'X-PowerBI-ResourceKey': reportKey,
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip'
+      }
+    }, res => {
+      let stream = res;
+      if (res.headers['content-encoding'] === 'gzip') stream = res.pipe(zlib.createGunzip());
+      const chunks = [];
+      stream.on('data', c => chunks.push(c));
+      stream.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return reject(new Error('PBI metadata HTTP ' + res.statusCode + ': ' + text.substring(0, 200)));
+        }
+        try { resolve(JSON.parse(text)); }
+        catch (e) { reject(new Error('PBI metadata parse error: ' + e.message)); }
+      });
+      stream.on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(30000, () => { req.destroy(); reject(new Error('PBI metadata timeout')); });
+    req.end();
+  });
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -1761,33 +1793,77 @@ async function fetchSeattle() {
   return { ytd, prior, asof };
 }
 
-// ─── Cincinnati (Socrata) ───────────────────────────────────────────────────
+// --- Cincinnati (CincyInsights Power BI) ---
 
 async function fetchCincinnati() {
-  const base = 'https://data.cincinnati-oh.gov/resource/sfea-4ksu.json';
+  // The public Socrata table (sfea-4ksu) stopped at 2026-05-18, while the
+  // CincyInsights story now embeds a separately refreshed public Power BI model.
+  // Page 4, "Victims Historical", contains the comparable YTD victim totals.
+  const cluster = 'wabi-us-north-central-k-primary-api.analysis.windows.net';
+  const reportKey = 'd6def23f-9c60-44df-8c7a-b58857b9149b';
+  const pageName = '8a7e92a411cdc694ff62';
   const CURRENT_YEAR = new Date().getFullYear();
-  function fmt(d) { return d.replace(/-/g, ''); }
 
-  async function socrataCount(where) {
-    const url = base + '?$where=' + encodeURIComponent(where) + '&$select=count(*)%20as%20n&$limit=1';
-    const d = await fetchJsonRetry(url, { label: 'Cincinnati count', attempts: 3, timeoutMs: 45000 });
-    return parseInt(d[0] && d[0].n ? d[0].n : 0);
+  const metadata = await pbiGetJson(
+    cluster,
+    reportKey,
+    '/public/reports/' + reportKey + '/modelsAndExploration?preferReadOnlySession=true'
+  );
+  const model = metadata.models && metadata.models[0];
+  const page = metadata.exploration?.sections?.find(section => section.name === pageName);
+  if (!model || !page) throw new Error('Cincinnati: Power BI model or Victims Historical page not found');
+
+  function parseVisual(visual) {
+    try {
+      return {
+        config: JSON.parse(visual.config || '{}'),
+        query: JSON.parse(visual.query || '{}')
+      };
+    } catch (_) {
+      return { config: {}, query: {} };
+    }
   }
 
-  const latestUrl = base + '?$order=dateoccurred%20DESC&$limit=1&$select=dateoccurred';
-  const latestData = await fetchJsonRetry(latestUrl, { label: 'Cincinnati latest', attempts: 3, timeoutMs: 45000 });
-  let asof = null;
-  if (latestData[0] && latestData[0].dateoccurred) {
-    const raw = latestData[0].dateoccurred;
-    asof = raw.length === 8 ? raw.slice(0,4) + '-' + raw.slice(4,6) + '-' + raw.slice(6,8) : raw.slice(0, 10);
+  const visuals = page.visualContainers.map(parseVisual);
+  const byYear = visuals.find(visual => {
+    const title = visual.config.singleVisual?.vcObjects?.title?.[0]?.properties?.text?.expr?.Literal?.Value;
+    return visual.config.singleVisual?.visualType === 'columnChart' && title === "'By Year:'";
+  });
+  const timestamp = visuals.find(visual =>
+    visual.config.singleVisual?.visualType === 'textbox' &&
+    visual.query.Commands?.[0]?.SemanticQueryDataShapeCommand
+  );
+  const byYearCommand = byYear?.query?.Commands?.[0]?.SemanticQueryDataShapeCommand;
+  if (!byYearCommand) throw new Error('Cincinnati: By Year visual query not found');
+
+  const byYearDsr = await pbiDataShapeQuery(
+    cluster, reportKey, model.id, model.dbName, byYearCommand
+  );
+  const rows = byYearDsr?.DS?.[0]?.PH?.[0]?.DM0 || [];
+  const counts = {};
+  for (const row of rows) {
+    // X[0] is the "Before Today" series; X[1], when present, is after today.
+    const beforeToday = row.X?.[0]?.M0;
+    if (row.G0 != null && beforeToday != null) counts[row.G0] = beforeToday;
   }
-  if (!asof) throw new Error('Cincinnati: no latest date');
+  const ytd = counts[CURRENT_YEAR];
+  const prior = counts[CURRENT_YEAR - 1];
+  if (ytd == null || prior == null) {
+    throw new Error('Cincinnati: missing current/prior YTD values in By Year response');
+  }
 
-  const ytdWhere = "`dateoccurred` >= '" + fmt(CURRENT_YEAR + '-01-01') + "' AND `dateoccurred` <= '" + fmt(asof) + "'";
-  const priorEnd = (CURRENT_YEAR - 1) + asof.slice(4);
-  const priorWhere = "`dateoccurred` >= '" + fmt((CURRENT_YEAR - 1) + '-01-01') + "' AND `dateoccurred` <= '" + fmt(priorEnd) + "'";
+  let asof = formatPbiDate(model.LastRefreshTime || model.lastRefreshTime);
+  const timestampCommand = timestamp?.query?.Commands?.[0]?.SemanticQueryDataShapeCommand;
+  if (timestampCommand) {
+    const timestampDsr = await pbiDataShapeQuery(
+      cluster, reportKey, model.id, model.dbName, timestampCommand
+    );
+    const timestampRow = timestampDsr?.DS?.[0]?.PH?.[0]?.DM1?.[0];
+    const timestampValue = timestampRow?.M1 ?? timestampRow?.M0;
+    asof = formatPbiDate(timestampValue) || asof;
+  }
+  if (!asof) throw new Error('Cincinnati: no Power BI as-of date');
 
-  const [ytd, prior] = await Promise.all([socrataCount(ytdWhere), socrataCount(priorWhere)]);
   console.log('Cincinnati: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
   return { ytd, prior, asof };
 }
