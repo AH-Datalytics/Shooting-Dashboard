@@ -15,12 +15,11 @@
     "stale": true
   },
   "detroit": {
-    "ytd": 162,
-    "prior": 186,
-    "asof": "2026-06-23",
-    "fetchedAt": "2026-07-02T22:25:41.619Z",
-    "ok": true,
-    "stale": true
+    "ytd": 203,
+    "prior": 232,
+    "asof": "2026-07-09",
+    "fetchedAt": "2026-07-23T18:58:00.616Z",
+    "ok": true
   },
   "durham": {
     "ytd": 109,

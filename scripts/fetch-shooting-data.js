@@ -451,17 +451,35 @@ async function extractPdfTokens(buffer, pageNum = 1) {
 
 
 function fetchDetroitUrl(targetUrl) {
-  // Detroit's Cloudflare layer blocks Node's TLS client but permits curl.
+  // Detroit's Cloudflare layer blocks Node's TLS client. A curl HEAD request
+  // establishes the bot-management cookie before the PDF download.
   const { execFile } = require('child_process');
   const command = process.platform === 'win32' ? 'curl.exe' : 'curl';
-  return new Promise(resolve => {
-    execFile(command, ['-fsSL', '--max-time', '30', targetUrl], {
-      encoding: 'buffer',
-      maxBuffer: 20 * 1024 * 1024
-    }, (error, stdout) => {
-      if (error) return resolve({ status: 0, body: Buffer.alloc(0) });
-      resolve({ status: 200, body: Buffer.from(stdout) });
+  const common = ['-4', '--http1.1', '--max-time', '30'];
+
+  function run(args) {
+    return new Promise(resolve => {
+      execFile(command, args, {
+        encoding: 'buffer',
+        maxBuffer: 20 * 1024 * 1024
+      }, (error, stdout) => resolve(error ? null : Buffer.from(stdout)));
     });
+  }
+
+  return run([...common, '-fsSI', targetUrl]).then(async headers => {
+    if (!headers) return { status: 0, body: Buffer.alloc(0) };
+    const cookie = headers.toString('latin1')
+      .split(/\r?\n/)
+      .filter(line => /^set-cookie:/i.test(line))
+      .map(line => line.replace(/^set-cookie:\s*/i, '').split(';')[0])
+      .join('; ');
+    const args = [...common, '-fsSL'];
+    if (cookie) args.push('-H', 'Cookie: ' + cookie);
+    args.push('-H', 'Referer: https://detroitmi.gov/Calendar-and-Events', targetUrl);
+    const body = await run(args);
+    return body
+      ? { status: 200, body }
+      : { status: 0, body: Buffer.alloc(0) };
   });
 }
 
