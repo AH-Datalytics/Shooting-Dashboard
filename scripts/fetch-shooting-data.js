@@ -450,11 +450,26 @@ async function extractPdfTokens(buffer, pageNum = 1) {
 
 
 
+function fetchDetroitUrl(targetUrl) {
+  // Detroit's Cloudflare layer blocks Node's TLS client but permits curl.
+  const { execFile } = require('child_process');
+  const command = process.platform === 'win32' ? 'curl.exe' : 'curl';
+  return new Promise(resolve => {
+    execFile(command, ['-fsSL', '--max-time', '30', targetUrl], {
+      encoding: 'buffer',
+      maxBuffer: 20 * 1024 * 1024
+    }, (error, stdout) => {
+      if (error) return resolve({ status: 0, body: Buffer.alloc(0) });
+      resolve({ status: 200, body: Buffer.from(stdout) });
+    });
+  });
+}
+
 async function fetchDetroit() {
 
   // Try recent dates going backwards to find the latest PDF
 
-  // Two known filename patterns: "YYMMDD DPD Stats.pdf" and "YYMMDD DPD Weekly Stats.pdf"
+  // Known filename patterns vary between meeting uploads.
 
   const today = new Date();
 
@@ -462,11 +477,11 @@ async function fetchDetroit() {
 
   let pdfUrl = null;
 
-  const patterns = ['DPD%20Stats', 'DPD%20Weekly%20Stats'];
+  const patterns = ['Daily%20Stats', 'DPD%20Stats', 'DPD%20Weekly%20Stats'];
 
   
 
-  for (let back = 0; back <= 10; back++) {
+  for (let back = 0; back <= 30; back++) {
 
     const d = new Date(today);
 
@@ -488,7 +503,7 @@ async function fetchDetroit() {
 
       console.log('Detroit: trying', pdfUrl);
 
-      resp = await fetchUrl(pdfUrl);
+      resp = await fetchDetroitUrl(pdfUrl);
 
       if (resp.status === 200) { found = true; break; }
 
@@ -502,7 +517,7 @@ async function fetchDetroit() {
 
   
 
-  if (!resp || resp.status !== 200) throw new Error(`Detroit PDF not found (tried 11 dates x 2 patterns)`);
+  if (!resp || resp.status !== 200) throw new Error(`Detroit PDF not found (tried 31 dates x 3 patterns)`);
 
 
 
@@ -530,7 +545,7 @@ async function fetchDetroit() {
 
   if (!asof) {
 
-    const fnMatch = pdfUrl.match(/\/(\d{2})(\d{2})(\d{2})%20DPD/);
+    const fnMatch = pdfUrl.match(/\/(\d{2})(\d{2})(\d{2})%20/);
 
     if (fnMatch) asof = `20${fnMatch[1]}-${fnMatch[2]}-${fnMatch[3]}`;
 
@@ -2412,6 +2427,7 @@ async function runSelectedCity() {
     neworleans: fetchNewOrleans,
     portsmouth: fetchPortsmouth,
     seattle: fetchSeattle,
+    detroit: fetchDetroit,
     denver: fetchDenver,
     stlouis: fetchStLouis
   };
