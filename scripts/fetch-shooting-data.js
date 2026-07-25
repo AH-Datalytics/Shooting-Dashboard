@@ -487,62 +487,6 @@ function fetchDetroitUrl(targetUrl) {
   });
 }
 
-function parseDetroitReaderText(rawText, pdfUrl) {
-  const text = String(rawText || '')
-    .replace(/[|*_#`]/g, ' ')
-    .replace(/\s+/g, ' ');
-  const row = text.match(/Non.?Fatal\s*Shooting\s+(-?[\d,]+)\s+(-?[\d,]+)\s+(-?[\d,]+)\s+(-?[\d,]+)/i);
-  if (!row) throw new Error('Non-Fatal Shooting row not found in reader response');
-
-  const ytd = parseInt(row[3].replace(/,/g, ''), 10);
-  const prior = parseInt(row[4].replace(/,/g, ''), 10);
-  if (!Number.isFinite(ytd) || !Number.isFinite(prior)) {
-    throw new Error('Could not parse Detroit reader counts');
-  }
-
-  let asof = null;
-  const dateMatch = text.match(/\w+day,\s+(\w+)\s+(\d{1,2}),\s+(\d{4})/i);
-  if (dateMatch) {
-    const months = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12};
-    const mo = months[dateMatch[1].toLowerCase()];
-    if (mo) asof = `${dateMatch[3]}-${String(mo).padStart(2,'0')}-${String(parseInt(dateMatch[2], 10)).padStart(2,'0')}`;
-  }
-  if (!asof) {
-    const fnMatch = pdfUrl.match(/\/(\d{2})(\d{2})(\d{2})%20/);
-    if (fnMatch) asof = `20${fnMatch[1]}-${fnMatch[2]}-${fnMatch[3]}`;
-  }
-  return { ytd, prior, asof };
-}
-
-async function fetchDetroitViaReader(patterns) {
-  const today = new Date();
-  // Try the most common filename across the date window before moving to
-  // alternate names, minimizing requests to the reader service.
-  const readerPatterns = ['DPD%20Stats', ...patterns.filter(pat => pat !== 'DPD%20Stats')];
-  for (const pat of readerPatterns) {
-    for (let back = 0; back <= 30; back++) {
-      const d = new Date(today);
-      d.setDate(d.getDate() - back);
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
-      const yy = String(yyyy).slice(2);
-      const pdfUrl = `https://detroitmi.gov/sites/detroitmi.localhost/files/events/${yyyy}-${mm}/${yy}${mm}${dd}%20${pat}.pdf`;
-      console.log('Detroit reader: trying', pdfUrl);
-      try {
-        const readerResp = await fetchUrl(readerUrl(pdfUrl), 45000);
-        if (readerResp.status !== 200) continue;
-        const result = parseDetroitReaderText(readerResp.body.toString('utf8'), pdfUrl);
-        console.log('Detroit reader: ytd=' + result.ytd + ' prior=' + result.prior + ' asof=' + result.asof);
-        return result;
-      } catch (e) {
-        console.log('Detroit reader:   ' + e.message);
-      }
-    }
-  }
-  throw new Error('Detroit PDF not available through direct download or reader fallback');
-}
-
 async function fetchDetroit() {
 
   // Try recent dates going backwards to find the latest PDF
@@ -583,6 +527,12 @@ async function fetchDetroit() {
 
       resp = await fetchDetroitUrl(pdfUrl);
 
+      if (resp.status !== 200) {
+        const originUrl = pdfUrl.replace('https://detroitmi.gov/', 'https://detroitmi.prod.acquia-sites.com/');
+        console.log('Detroit: trying origin', originUrl);
+        resp = await fetchDetroitUrl(originUrl);
+      }
+
       if (resp.status === 200) { found = true; break; }
 
       console.log('Detroit:   status=' + resp.status);
@@ -595,10 +545,7 @@ async function fetchDetroit() {
 
   
 
-  if (!resp || resp.status !== 200) {
-    console.log('Detroit: direct downloads failed; trying reader fallback');
-    return fetchDetroitViaReader(patterns);
-  }
+  if (!resp || resp.status !== 200) throw new Error(`Detroit PDF not found (tried 31 dates x 3 patterns)`);
 
 
 
