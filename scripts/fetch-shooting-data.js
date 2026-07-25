@@ -467,12 +467,16 @@ function fetchDetroitUrl(targetUrl) {
   }
 
   return run([...common, '-fsSI', targetUrl]).then(async headers => {
-    if (!headers) return { status: 0, body: Buffer.alloc(0) };
-    const cookie = headers.toString('latin1')
-      .split(/\r?\n/)
-      .filter(line => /^set-cookie:/i.test(line))
-      .map(line => line.replace(/^set-cookie:\s*/i, '').split(';')[0])
-      .join('; ');
+    // Some hosts (including GitHub Actions runners) are denied on HEAD even
+    // when the PDF itself is available via GET. Treat HEAD as an optional
+    // cookie warm-up and always attempt the actual download.
+    const cookie = headers
+      ? headers.toString('latin1')
+        .split(/\r?\n/)
+        .filter(line => /^set-cookie:/i.test(line))
+        .map(line => line.replace(/^set-cookie:\s*/i, '').split(';')[0])
+        .join('; ')
+      : '';
     const args = [...common, '-fsSL'];
     if (cookie) args.push('-H', 'Cookie: ' + cookie);
     args.push('-H', 'Referer: https://detroitmi.gov/Calendar-and-Events', targetUrl);
