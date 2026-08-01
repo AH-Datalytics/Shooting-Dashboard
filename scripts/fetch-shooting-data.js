@@ -2379,6 +2379,13 @@ async function main() {
 
     if (value.ok) {
 
+      // Chicago Socrata can return partial counts with HTTP 200.
+      if (key === 'chicago' && existing[key] && existing[key].ok && Number.isFinite(existing[key].ytd) && Number.isFinite(value.ytd) && value.ytd < existing[key].ytd * 0.5 && (!existing[key].asof || !value.asof || value.asof >= existing[key].asof)) {
+        console.log(key + ' rejecting implausible YTD drop; keeping previous good data');
+        results[key] = { ...existing[key], stale: true };
+        continue;
+      }
+
       if (!value.asof && existing[key] && existing[key].asof) {
         value.asof = existing[key].asof;
       }
