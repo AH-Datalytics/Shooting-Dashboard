@@ -24,7 +24,7 @@ const path  = require('path');
 
 
 
-function fetchUrl(targetUrl, timeoutMs = 20000, _maxRedirects = 10) {
+function fetchUrl(targetUrl, timeoutMs = 20000, _maxRedirects = 10, extraHeaders = null) {
 
   return new Promise((resolve, reject) => {
 
@@ -42,7 +42,7 @@ function fetchUrl(targetUrl, timeoutMs = 20000, _maxRedirects = 10) {
 
       method: 'GET',
 
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36' },
+      headers: Object.assign({ 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36' }, extraHeaders || {}),
 
       timeout: timeoutMs,
 
@@ -60,7 +60,10 @@ function fetchUrl(targetUrl, timeoutMs = 20000, _maxRedirects = 10) {
 
           : parsed.origin + res.headers.location;
 
-        return fetchUrl(redirect, timeoutMs, _maxRedirects - 1).then(resolve).catch(reject);
+        // Only forward auth headers if we stay on the same host.
+        const sameHost = (() => { try { return new URL(redirect).host === parsed.host; } catch (e) { return false; } })();
+
+        return fetchUrl(redirect, timeoutMs, _maxRedirects - 1, sameHost ? extraHeaders : null).then(resolve).catch(reject);
 
       }
 
@@ -267,7 +270,7 @@ async function fetchUrlRetry(targetUrl, options = {}) {
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      const resp = await fetchUrl(targetUrl, timeoutMs);
+      const resp = await fetchUrl(targetUrl, timeoutMs, 10, options.headers || null);
       if (resp.status >= 200 && resp.status < 300) return resp;
       lastError = new Error(label + ': HTTP ' + resp.status);
     } catch (e) {
@@ -1414,7 +1417,16 @@ function findVegasCrimeReportLinkFromMarkdown(text) {
 }
 
 function readerUrl(targetUrl) {
-  return 'https://r.jina.ai/http://' + targetUrl;
+  // r.jina.ai expects https://r.jina.ai/<absolute-url>. Strip any existing
+  // scheme first so we don't emit https://r.jina.ai/http://https://host/...
+  return 'https://r.jina.ai/https://' + String(targetUrl).replace(/^https?:\/\//i, '');
+}
+
+// Optional r.jina.ai auth. Anonymous reads are refused on some networks
+// (401 AuthenticationRequiredError); a key gets us past that.
+function readerHeaders() {
+  const key = process.env.JINA_API_KEY;
+  return key ? { Authorization: 'Bearer ' + key } : null;
 }
 
 function parseVegasReportText(text) {
@@ -1439,12 +1451,16 @@ function parseVegasReportText(text) {
 }
 
 async function fetchVegasViaReader(pdfLink) {
+  const headers = readerHeaders();
+  console.log('Vegas reader: ' + (headers ? 'using JINA_API_KEY' : 'anonymous (no JINA_API_KEY set)'));
+
   let reportLink = pdfLink;
   if (!reportLink) {
     const statsResp = await fetchUrlRetry(readerUrl('https://www.lvmpd.com/about/transparency/statistics'), {
       label: 'Vegas reader stats page',
       attempts: 2,
-      timeoutMs: 30000
+      timeoutMs: 30000,
+      headers
     });
     reportLink = findVegasCrimeReportLinkFromMarkdown(statsResp.body.toString('utf8'));
     if (!reportLink) throw new Error('Vegas reader: crime report link not found');
@@ -1454,7 +1470,8 @@ async function fetchVegasViaReader(pdfLink) {
   const reportResp = await fetchUrlRetry(readerUrl(reportLink), {
     label: 'Vegas reader report',
     attempts: 2,
-    timeoutMs: 45000
+    timeoutMs: 45000,
+    headers
   });
   const result = parseVegasReportText(reportResp.body.toString('utf8'));
   console.log('Vegas reader: ytd=' + result.ytd + ' prior=' + result.prior + ' asof=' + result.asof);
