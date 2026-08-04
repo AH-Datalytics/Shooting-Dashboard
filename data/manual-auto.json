@@ -3,119 +3,119 @@
     "ytd": 411,
     "prior": 643,
     "asof": "2026-08-03",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "minneapolis": {
     "ytd": 159,
     "prior": 159,
     "asof": "2026-08-02",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "detroit": {
     "ytd": 238,
     "prior": 251,
     "asof": "2026-07-23",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "durham": {
     "ytd": 116,
     "prior": 102,
     "asof": "2026-08-01",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "milwaukee": {
     "ytd": 249,
     "prior": 341,
     "asof": "2026-08-03",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "memphis": {
     "ytd": 300,
     "prior": 474,
     "asof": "2026-08-03",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "miamidade": {
     "ytd": 132,
     "prior": 167,
     "asof": "2026-07-20",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "pittsburgh": {
     "ytd": 64,
     "prior": 74,
     "asof": "2026-08-04",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "portland": {
     "ytd": 64,
     "prior": 71,
     "asof": "2026-06-30",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "buffalo": {
     "ytd": 61,
     "prior": 65,
     "asof": "2026-06-30",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "albany": {
     "ytd": 16,
     "prior": 19,
     "asof": "2026-06-30",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "syracuse": {
     "ytd": 34,
     "prior": 43,
     "asof": "2026-06-30",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "suffolkcounty": {
     "ytd": 17,
     "prior": 27,
     "asof": "2026-06-30",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "nashville": {
     "ytd": 139,
     "prior": 175,
     "asof": "2026-08-01",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "hartford": {
     "ytd": 44,
     "prior": 36,
     "asof": "2026-07-18",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "denver": {
     "ytd": 114,
     "prior": 119,
     "asof": "2026-08-02",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "portsmouth": {
     "ytd": 39,
     "prior": 68,
     "asof": "2026-08-04",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "wilmington": {
@@ -123,90 +123,91 @@
     "prior": 43,
     "asof": "2026-08-02",
     "fetchedAt": "2026-08-04T22:20:54.110Z",
-    "ok": true
+    "ok": true,
+    "stale": true
   },
   "lasvegas": {
     "ytd": 159,
     "prior": 177,
     "asof": "2026-08-02",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "chicago": {
     "ytd": 1067,
     "prior": 1068,
     "asof": "2026-08-02",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "nyc": {
     "ytd": 471,
     "prior": 494,
     "asof": "2026-08-02",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "baltimore": {
     "ytd": 238,
     "prior": 259,
     "asof": "2026-08-03",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "boston": {
     "ytd": 74,
     "prior": 62,
     "asof": "2026-07-18",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "louisville": {
     "ytd": 187,
     "prior": 223,
     "asof": "2026-08-01",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "seattle": {
     "ytd": 60,
     "prior": 71,
     "asof": "2026-08-03",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "cincinnati": {
     "ytd": 162,
     "prior": 169,
     "asof": "2026-08-02",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "stlouis": {
     "ytd": 335,
     "prior": 314,
     "asof": "2026-07-26",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "neworleans": {
     "ytd": 130,
     "prior": 160,
     "asof": "2026-08-01",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "charlotte": {
     "ytd": 129,
     "prior": 182,
     "asof": "2026-06-30",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   },
   "rochester": {
     "ytd": 84,
     "prior": 97,
     "asof": "2026-08-02",
-    "fetchedAt": "2026-08-04T22:20:54.110Z",
+    "fetchedAt": "2026-08-04T22:26:24.363Z",
     "ok": true
   }
 }
