@@ -38,7 +38,6 @@ jobs:
       - name: Fetch shooting data
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
           DISPLAY: ':99'
         run: |
           sudo apt-get install -y xvfb

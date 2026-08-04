@@ -681,9 +681,9 @@ var CITIES = [
   {
     id: 'lasvegas',
     name: 'Las Vegas, NV',
-    note: 'Shooting Victims (Weekly Crime Report PDF)',
+    note: 'Shooting Victims (NIBRS Open Data)',
     type: 'Victims',
-    dataUrl: 'https://www.lvmpd.com/about/transparency/statistics',
+    dataUrl: 'https://opendata-lvmpd.hub.arcgis.com/',
     count: function(s) { return autoOrManualCount('lasvegas', 'lasvegas', s); },
     latest: function() { return autoOrManualLatest('lasvegas', 'lasvegas'); }
   },

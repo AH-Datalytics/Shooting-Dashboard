@@ -1366,7 +1366,7 @@ async function fetchMiamiDade() {
 }
 
 
-// ─── Las Vegas (LVMPD Weekly Crime Report PDF) ──────────────────────────────
+// ─── Las Vegas (LVMPD NIBRS open data, ArcGIS) ──────────────────────────────
 
 function decodeHtmlEntities(s) {
   return String(s || '')
@@ -1386,290 +1386,84 @@ function absoluteUrl(href, baseUrl) {
   catch { return null; }
 }
 
-function findVegasCrimeReportLink(html) {
-  const links = [];
-  const re = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-  let m;
-  while ((m = re.exec(html))) {
-    const href = absoluteUrl(m[1], 'https://www.lvmpd.com/about/transparency/statistics');
-    const text = stripHtml(m[2]).toLowerCase();
-    const hrefLower = String(href || '').toLowerCase();
-    if (!href) continue;
-    links.push({ href, text, hrefLower });
-  }
+// lvmpd.com is behind Akamai bot protection and returns 403 to every
+// automated client, so the weekly crime report PDF is unreachable. LVMPD's
+// open data publishes the same ShootingVictimCount field the report totals.
+//
+// Shooting victims appear under all three NIBRS crime-against categories
+// (robbery, for instance, is a crime against property), so all three layers
+// must be summed. One row per offense: an event recorded as murder +
+// aggravated assault is two victims, so rows are summed rather than deduped
+// by event.
+const VEGAS_ARCGIS_HOST = 'https://services.arcgis.com/jjSk6t82vIntwDbs/arcgis/rest/services';
 
-  const crimeReport = links.find(l =>
-    l.text.includes('crime report') &&
-    (l.hrefLower.includes('.pdf') || l.hrefLower.includes('/showpublisheddocument/'))
-  );
-  if (crimeReport) return crimeReport.href;
+const VEGAS_ARCGIS_LAYERS = [
+  'LVMPD_Reported_NIBRS_Crimes_Against_Persons',
+  'LVMPD_Reported_NIBRS_Crimes_Against_Property',
+  'LVMPD_Reported_NIBRS_Crimes_Society'
+];
 
-  const fallback = links.find(l =>
-    (l.text.includes('crime report') || l.hrefLower.includes('crime')) &&
-    (l.hrefLower.includes('.pdf') || l.hrefLower.includes('/showpublisheddocument/'))
-  );
-  return fallback ? fallback.href : null;
+function utcDateString(epochMs) {
+  const d = new Date(epochMs);
+  return d.getUTCFullYear() + '-' +
+    String(d.getUTCMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getUTCDate()).padStart(2, '0');
 }
 
-function findVegasCrimeReportLinkFromMarkdown(text) {
-  const m = String(text || '').match(/\[Crime Report[^\]]*?\]\((https:\/\/www\.lvmpd\.com\/home\/showpublisheddocument\/[^)]+)\)/i);
-  return m ? m[1] : null;
-}
-
-function readerUrl(targetUrl) {
-  // r.jina.ai expects https://r.jina.ai/<absolute-url>. Strip any existing
-  // scheme first so we don't emit https://r.jina.ai/http://https://host/...
-  return 'https://r.jina.ai/https://' + String(targetUrl).replace(/^https?:\/\//i, '');
-}
-
-// Optional r.jina.ai auth. Anonymous reads are refused on some networks
-// (401 AuthenticationRequiredError); a key gets us past that.
-function readerHeaders() {
-  const key = process.env.JINA_API_KEY;
-  return key ? { Authorization: 'Bearer ' + key } : null;
-}
-
-function parseVegasReportText(text) {
-  const body = String(text || '').replace(/\s+/g, ' ');
-  const row = body.match(/Shooting Victims\s+(-?[\d,]+(?:\.\d+)?%?)\s+(-?[\d,]+(?:\.\d+)?%?)\s+(-?[\d,]+(?:\.\d+)?%?)\s+(-?[\d,]+(?:\.\d+)?%?)/i);
-  if (!row) throw new Error('Vegas reader: Shooting Victims row not found');
-
-  const ytd = parseInt(row[1].replace(/,/g, ''), 10);
-  const prior = parseInt(row[3].replace(/,/g, ''), 10);
-  if (!Number.isFinite(ytd) || !Number.isFinite(prior)) {
-    throw new Error('Vegas reader: could not parse Shooting Victims counts');
-  }
-
-  let asof = null;
-  const dateMatch = body.match(/[Ww]eek\s+[Ee]nding:?\s+(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (dateMatch) {
-    asof = dateMatch[3] + '-' + String(parseInt(dateMatch[1], 10)).padStart(2, '0') + '-' + String(parseInt(dateMatch[2], 10)).padStart(2, '0');
-  }
-  if (!asof) throw new Error('Vegas reader: week ending date not found');
-
-  return { ytd, prior, asof };
-}
-
-async function fetchVegasViaReader(pdfLink) {
-  const headers = readerHeaders();
-  console.log('Vegas reader: ' + (headers ? 'using JINA_API_KEY' : 'anonymous (no JINA_API_KEY set)'));
-
-  let reportLink = pdfLink;
-  if (!reportLink) {
-    const statsResp = await fetchUrlRetry(readerUrl('https://www.lvmpd.com/about/transparency/statistics'), {
-      label: 'Vegas reader stats page',
-      attempts: 2,
-      timeoutMs: 30000,
-      headers
-    });
-    reportLink = findVegasCrimeReportLinkFromMarkdown(statsResp.body.toString('utf8'));
-    if (!reportLink) throw new Error('Vegas reader: crime report link not found');
-  }
-
-  console.log('Vegas: using reader fallback for', reportLink);
-  const reportResp = await fetchUrlRetry(readerUrl(reportLink), {
-    label: 'Vegas reader report',
-    attempts: 2,
-    timeoutMs: 45000,
-    headers
-  });
-  const result = parseVegasReportText(reportResp.body.toString('utf8'));
-  console.log('Vegas reader: ytd=' + result.ytd + ' prior=' + result.prior + ' asof=' + result.asof);
-  return result;
-}
-
-async function downloadPdfWithBrowser(page, pdfLink) {
-  const downloadPromise = page.waitForEvent('download', { timeout: 15000 }).catch(() => null);
-  const response = await page.goto(pdfLink, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(e => {
-    console.log('Vegas: browser PDF navigation failed:', e.message);
-    return null;
-  });
-  const download = await downloadPromise;
-  if (download) {
-    const downloadPath = await download.path();
-    if (!downloadPath) throw new Error('Vegas: PDF download path null');
-    return require('fs').readFileSync(downloadPath);
-  }
-  if (response && response.ok()) {
-    return await response.body();
-  }
-  throw new Error('Vegas: PDF request failed' + (response ? ' HTTP ' + response.status() : ''));
+// Exclusive upper bound for the prior-year window, matched to the same
+// calendar day. Date.UTC normalizes overflow, so Feb 29 against a non-leap
+// prior year rolls forward instead of producing an invalid date.
+function vegasPriorCutoff(asof, priorYear) {
+  const parts = asof.split('-').map(Number);
+  return utcDateString(Date.UTC(priorYear, parts[1] - 1, parts[2] + 1));
 }
 
 async function fetchVegas() {
-  const statsUrl = 'https://www.lvmpd.com/about/transparency/statistics';
-  let pdfLink = null;
+  const CURRENT_YEAR = new Date().getUTCFullYear();
 
-  try {
-    const statsResp = await fetchUrlRetry(statsUrl, { label: 'Vegas stats page', attempts: 2, timeoutMs: 30000 });
-    const statsHtml = statsResp.body.toString('utf8');
-    if (!/Access Denied/i.test(statsHtml)) {
-      pdfLink = findVegasCrimeReportLink(statsHtml);
-      if (pdfLink) console.log('Vegas: found PDF from static HTML:', pdfLink);
-    }
-  } catch (e) {
-    console.log('Vegas: static HTML lookup failed:', e.message);
+  async function arcStats(layer, where, stats) {
+    const url = VEGAS_ARCGIS_HOST + '/' + layer + '/FeatureServer/0/query' +
+      '?where=' + encodeURIComponent(where) +
+      '&outStatistics=' + encodeURIComponent(JSON.stringify(stats)) +
+      '&returnGeometry=false&f=json';
+    const d = await fetchJsonRetry(url, { label: 'Vegas ' + layer, attempts: 3, timeoutMs: 45000 });
+    if (d.error) throw new Error('Vegas: ' + (d.error.message || JSON.stringify(d.error).slice(0, 120)));
+    return (d.features && d.features[0] && d.features[0].attributes) || {};
   }
 
-  const { chromium } = require('playwright');
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--disable-blink-features=AutomationControlled']
-  });
+  const SUM_VICTIMS = { statisticType: 'sum', onStatisticField: 'ShootingVictimCount', outStatisticFieldName: 'sv' };
+  const MAX_REPORTED = { statisticType: 'max', onStatisticField: 'ReportedOn', outStatisticFieldName: 'mx' };
 
-  try {
-    const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      viewport: { width: 1920, height: 1080 },
-      acceptDownloads: true
-    });
-    const page = await context.newPage();
-    await page.addInitScript(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    });
+  // A single pass over the current year yields both the running total and the
+  // most recent reported date, which becomes the as-of cutoff.
+  const ytdWhere = "ReportedOn >= DATE '" + CURRENT_YEAR + "-01-01'";
+  const currentStats = await Promise.all(
+    VEGAS_ARCGIS_LAYERS.map(layer => arcStats(layer, ytdWhere, [SUM_VICTIMS, MAX_REPORTED]))
+  );
 
-    if (!pdfLink) {
-      console.log('Vegas: navigating to statistics page...');
-      await page.goto(statsUrl, {
-        waitUntil: 'domcontentloaded', timeout: 30000
-      });
-
-      // Find the crime report PDF link
-      pdfLink = await page.evaluate(() => {
-        const links = Array.from(document.querySelectorAll('a[href]'));
-        for (const a of links) {
-          const text = a.textContent.toLowerCase();
-          const href = a.href.toLowerCase();
-          if (text.includes('crime report') &&
-              (href.includes('.pdf') || href.includes('/showpublisheddocument/'))) {
-            return a.href;
-          }
-        }
-        // Fallback: any PDF/published document link with 'crime' in text or URL
-        for (const a of links) {
-          const text = a.textContent.toLowerCase();
-          const href = a.href.toLowerCase();
-          if ((href.includes('.pdf') || href.includes('/showpublisheddocument/')) &&
-              (text.includes('crime') || href.includes('crime'))) {
-            return a.href;
-          }
-        }
-        return null;
-      });
-    }
-
-    if (!pdfLink) {
-      // Log all links for debugging
-      const allLinks = await page.evaluate(() =>
-        Array.from(document.querySelectorAll('a[href]'))
-          .map(a => ({ href: a.href, text: a.textContent.trim().substring(0, 80) }))
-          .filter(l => l.href.includes('.pdf') || l.text.toLowerCase().includes('report'))
-      );
-      console.log('Vegas: no crime report PDF found. Links:', JSON.stringify(allLinks));
-      await browser.close();
-      return await fetchVegasViaReader(null);
-    }
-
-    console.log('Vegas: downloading PDF from', pdfLink);
-
-    let pdfBuffer;
-    try {
-      pdfBuffer = await downloadPdfWithBrowser(page, pdfLink);
-    } catch (e) {
-      console.log('Vegas: direct PDF download failed:', e.message);
-      await browser.close();
-      return await fetchVegasViaReader(pdfLink);
-    }
-
-    if (pdfBuffer.length < 5000 || pdfBuffer[0] !== 0x25) {
-      throw new Error('Vegas: downloaded file is not a valid PDF (' + pdfBuffer.length + ' bytes)');
-    }
-    console.log('Vegas: PDF downloaded (' + (pdfBuffer.length / 1024).toFixed(0) + ' KB)');
-
-    await browser.close();
-
-    // Parse page 2 for shooting victims
-    const tokens = await extractPdfTokens(pdfBuffer, 2);
-    const joined = tokens.join(' ');
-    console.log('Vegas: page 2 tokens (first 500):', joined.substring(0, 500));
-
-    // Look for "Shooting Victims" row — extract YTD and prior year numbers
-    // Typical format: "Shooting Victims  <weekly> <ytd_current> <ytd_prior> ..."
-    const shootingMatch = joined.match(/Shooting\s*Victims?[\s\S]*?(?=\n|Robbery|Domestic|Sexual|Homicide|Auto|Vehicle|Total|$)/i);
-    if (!shootingMatch) throw new Error('Vegas: "Shooting Victims" not found on page 2. Tokens: ' + tokens.slice(0, 80).join('|'));
-
-    const afterLabel = shootingMatch[0].replace(/Shooting\s*Victims?/i, '').trim();
-    const nums = [];
-    const numMatches = afterLabel.matchAll(/-?[\d,]+/g);
-    for (const m of numMatches) {
-      const n = parseInt(m[0].replace(/,/g, ''));
-      if (!isNaN(n)) nums.push(n);
-    }
-
-    console.log('Vegas: extracted numbers after "Shooting Victims":', nums);
-
-    if (nums.length < 2) throw new Error('Vegas: not enough numbers after Shooting Victims: ' + nums.join(','));
-
-    // Columns on the LVMPD statistical report are:
-    // Current YTD Reported, Current YTD Arrested, Previous YTD Reported, Previous YTD Arrested,
-    // Percent Change Reported, Percent Change Arrested. Shooting victims use Reported counts.
-    let ytd, prior;
-    if (nums.length >= 4) {
-      ytd = nums[0];
-      prior = nums[2];
-    } else {
-      ytd = nums[0];
-      prior = nums[1];
-    }
-
-    // Sanity check — YTD should be larger than weekly
-    if (ytd < 5 || prior < 5) {
-      console.log('Vegas: warning — values seem too low, trying alternative column positions');
-      // Try last two numbers
-      ytd = nums[nums.length - 2];
-      prior = nums[nums.length - 1];
-    }
-
-    // Extract "week ending" date from PDF text for asof
-    const page1Tokens = await extractPdfTokens(pdfBuffer, 1);
-    const page1Text = page1Tokens.join(' ');
-    let asof = null;
-    const numericDateMatch = page1Text.match(/[Ww]eek\s+[Ee]nding:?\s+(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    if (numericDateMatch) {
-      asof = numericDateMatch[3] + '-' + String(parseInt(numericDateMatch[1])).padStart(2,'0') + '-' + String(parseInt(numericDateMatch[2])).padStart(2,'0');
-    }
-    const dateMatch = !asof && page1Text.match(/[Ww]eek\s+[Ee]nding\s+(\w+)\s+(\d{1,2}),?\s+(\d{4})/);
-    if (dateMatch) {
-      const months = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12};
-      const mo = months[dateMatch[1].toLowerCase()];
-      if (mo) asof = dateMatch[3] + '-' + String(mo).padStart(2,'0') + '-' + String(parseInt(dateMatch[2])).padStart(2,'0');
-    }
-    if (!asof) {
-      // Try page 2
-      const numericDateMatch2 = joined.match(/[Ww]eek\s+[Ee]nding:?\s+(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-      if (numericDateMatch2) {
-        asof = numericDateMatch2[3] + '-' + String(parseInt(numericDateMatch2[1])).padStart(2,'0') + '-' + String(parseInt(numericDateMatch2[2])).padStart(2,'0');
-      }
-      const dateMatch2 = !asof && joined.match(/[Ww]eek\s+[Ee]nding\s+(\w+)\s+(\d{1,2}),?\s+(\d{4})/);
-      if (dateMatch2) {
-        const months = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12};
-        const mo = months[dateMatch2[1].toLowerCase()];
-        if (mo) asof = dateMatch2[3] + '-' + String(mo).padStart(2,'0') + '-' + String(parseInt(dateMatch2[2])).padStart(2,'0');
-      }
-    }
-    if (!asof) {
-      // Fallback: use today minus 3 days
-      const d = new Date(); d.setDate(d.getDate() - 3);
-      asof = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-    }
-
-    console.log('Vegas: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
-    return { ytd, prior, asof };
-
-  } catch(e) {
-    await browser.close().catch(() => {});
-    throw e;
+  let ytd = 0;
+  let latest = null;
+  for (const a of currentStats) {
+    ytd += a.sv || 0;
+    if (typeof a.mx === 'number' && (latest === null || a.mx > latest)) latest = a.mx;
   }
+  if (latest === null) throw new Error('Vegas: no ' + CURRENT_YEAR + ' records returned');
+
+  const asof = utcDateString(latest);
+
+  // ReportedOn carries a time component, so the upper bound is "< next day"
+  // rather than "<= day" - otherwise the final day is silently dropped.
+  const priorWhere = "ReportedOn >= DATE '" + (CURRENT_YEAR - 1) + "-01-01'" +
+    " AND ReportedOn < DATE '" + vegasPriorCutoff(asof, CURRENT_YEAR - 1) + "'";
+  const priorStats = await Promise.all(
+    VEGAS_ARCGIS_LAYERS.map(layer => arcStats(layer, priorWhere, [SUM_VICTIMS]))
+  );
+  const prior = priorStats.reduce((sum, a) => sum + (a.sv || 0), 0);
+
+  if (!ytd || !prior) throw new Error('Vegas: implausible totals ytd=' + ytd + ' prior=' + prior);
+
+  console.log('Vegas: ytd=' + ytd + ' prior=' + prior + ' asof=' + asof);
+  return { ytd, prior, asof };
 }
 
 
