@@ -2469,38 +2469,42 @@ async function fetchDenver() {
 
 
 async function fetchPortsmouth() {
-  const { chromium } = require('playwright');
   const yr = new Date().getFullYear();
   const cluster = 'wabi-us-gov-virginia-api.analysis.usgovcloudapi.net';
   const reportKey = 'd77fd2c3-982b-4843-98ee-ed2cfd839ecd';
   const modelId = 1497723;
   const datasetId = 'e8e96817-5c6b-4691-8745-4ffaf7d3a39b';
   const reportId = 'f774ff90-8529-4a94-8ee2-3bb97cce137a';
-  const browser = await chromium.launch({ headless: true });
-  const page    = await browser.newPage();
-  await page.setViewportSize({ width: 1536, height: 900 });
-  page.setDefaultTimeout(30000);
 
-  const url = 'https://app.powerbigov.us/view?r=eyJrIjoiZDc3ZmQyYzMtOTgyYi00ODQzLTk4ZWUtZWQyY2ZkODM5ZWNkIiwidCI6ImM3N2RiNGQ4LWEwZjUtNDU0YS05MmMxLWI3ZDg0YzY0ZmQ0NCJ9';
-  console.log('Portsmouth: loading Power BI dashboard...');
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await waitForPowerBI(page, 15000);
-  await page.waitForFunction(
-    () => /Last\s+(?:Database\s+)?Update[d]?[\s\S]*\d{1,2}\/\d{1,2}\/\d{4}/i.test(document.body.innerText),
-    null,
-    { timeout: 20000 }
-  ).catch(() => {});
-
-  const bodyText = await page.evaluate(() => document.body.innerText);
-  console.log('Portsmouth page sample:', bodyText.substring(0, 800));
-
-  let asof = null;
-  const dateMatch = bodyText.match(/(?:Last\s+(?:Database\s+)?Update[d]?|Updated)[\s\S]{0,80}?(\d{1,2})\/(\d{1,2})\/(\d{4})/i) ||
-    bodyText.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (dateMatch) {
-    asof = `${dateMatch[3]}-${dateMatch[1].padStart(2,'0')}-${dateMatch[2].padStart(2,'0')}`;
+  // As-of comes from the same Power BI back end as the counts. Reading it off the
+  // rendered page instead fell back to the first date anywhere in the DOM, which is
+  // the "Last 365 Days" axis start (~a year ago) whenever the Last Database Update
+  // card had not painted yet -- and a prior-year asof makes index.html swap ytd/prior.
+  const asofDsr = await pbiDataShapeQuery(
+    cluster,
+    reportKey,
+    modelId,
+    datasetId,
+    {
+      Query: {
+        Version: 2,
+        From: [{ Name: 'c', Entity: 'Crimes', Type: 0 }],
+        Select: [{ Measure: { Expression: { SourceRef: { Source: 'c' } }, Property: 'LatestDate' }, Name: 'Crimes.LatestDate', NativeReferenceName: 'LatestDate' }]
+      },
+      Binding: {
+        Primary: { Groupings: [{ Projections: [0] }] },
+        DataReduction: { DataVolume: 3, Primary: { Top: {} } },
+        Version: 1
+      },
+      ExecutionMetricsKind: 1
+    },
+    [{ ReportId: reportId, VisualId: 'ea8e54f19a5cde2a53c9' }]
+  );
+  const asof = formatPbiDate(asofDsr?.DS?.[0]?.PH?.[0]?.DM0?.[0]?.M0);
+  if (!asof) throw new Error('Portsmouth: no Last Database Update date from Power BI');
+  if (asof.slice(0, 4) !== String(yr)) {
+    throw new Error('Portsmouth: Last Database Update is not in ' + yr + ' (got ' + asof + ')');
   }
-  await browser.close();
 
   const dsr = await pbiDataShapeQuery(
     cluster,
